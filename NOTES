@@ -1,0 +1,16 @@
+TODO
+====
+use index.coffee to accumulate everything into a single namespace.
+
+
+DEBUGGING
+=========
+node-inspector in a window
+node --debug-brk stage/cli.js somefile.cab
+Load http://localhost:8081/debug?port=5858 in a browser.
+stop on uncaught
+use "debugger" keyword if necessary.
+
+Tests:
+node --debug-brk .\node_modules\jasmine-node\lib\jasmine-node\cli.js --coffee .\spec\typed_spec.coffee
+jasmine-node --watch src --autotest --coffee spec
