@@ -1,0 +1,6 @@
+- extend coffeelint to hunt for debugger lines
+- debugging jasmine-node run coffeescript does not show map (it's in js)
+
+
+
+- Work on ustar and gnu.

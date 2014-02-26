@@ -1,5 +1,8 @@
 streamtypes = require('../src/index')
+global[k] = v for k, v of require('./writer_util')
 TypedReaderNodeBuffer = streamtypes.TypedReaderNodeBuffer
+
+strBytesArray = (s) -> x.charCodeAt(0) for x in s
 
 describe 'Types', ->
   describe 'Basic Types', ->
@@ -53,16 +56,62 @@ describe 'Types', ->
       r.pushBuffer(b)
       expect(r.peek('DoubleLE')).toBeCloseTo(3.141592653589793, 15)
 
+    it 'should write basic types', ->
+      flushedExpectation null, ((w) ->
+        w.write('UInt8', 0)
+        w.write('UInt16', 0x0102)
+        w.write('UInt16BE', 0x0102)
+        w.write('UInt16LE', 0x0102)
+        w.write('UInt32', 0x01020304)
+        w.write('UInt32BE', 0x01020304)
+        w.write('UInt32LE', 0x01020304)
+        w.write('Int8', -1)
+        w.write('Int16', 0x0102)
+        w.write('Int16BE', 0x0102)
+        w.write('Int16LE', 0x0102)
+        w.write('Int32', 0x01020304)
+        w.write('Int32BE', 0x01020304)
+        w.write('Int32LE', 0x01020304)
+        w.write('Float', 3.4028234663852886e+38)
+        w.write('FloatBE', 3.4028234663852886e+38)
+        w.write('FloatLE', 3.4028234663852886e+38)
+        w.write('Double', 1.7976931348623157e+308)
+        w.write('DoubleBE', 1.7976931348623157e+308)
+        w.write('DoubleLE', 1.7976931348623157e+308)
+        ), [0,
+            1, 2,
+            1, 2,
+            2, 1,
+            1, 2, 3, 4,
+            1, 2, 3, 4,
+            4, 3, 2, 1,
+            0xff,
+            1, 2,
+            1, 2,
+            2, 1,
+            1, 2, 3, 4,
+            1, 2, 3, 4,
+            4, 3, 2, 1,
+            0x7f, 0x7f, 0xff, 0xff,
+            0x7f, 0x7f, 0xff, 0xff,
+            0xff, 0xff, 0x7f, 0x7f,
+            0x7f, 0xef, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0x7f, 0xef, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xef, 0x7f]
   ###########################################################################
 
   describe 'Bytes type', ->
-    it 'should read bytes', ->
+    it 'should read/write bytes', ->
       types =
         bytes4: ['Bytes', 4]
       r = new TypedReaderNodeBuffer(types)
       b = new Buffer([0x0A, 0x0B, 0x0C, 0x0D])
       r.pushBuffer(b)
       expect(r.peek('bytes4')).toEqual([0x0A, 0x0B, 0x0C, 0x0D])
+
+      flushedExpectation [types], ((w) ->
+        w.write('bytes4', [1, 2, 3, 4])
+      ), [1, 2, 3, 4]
 
     it 'should read bytes with function length', ->
       types =
@@ -91,7 +140,7 @@ describe 'Types', ->
   ###########################################################################
 
   describe 'Bits type', ->
-    it 'should read bits', ->
+    it 'should read/write bits', ->
       types =
         bits4: ['Bits', 4]
       r = new TypedReaderNodeBuffer(types)
@@ -100,6 +149,14 @@ describe 'Types', ->
       expect(r.read('bits4')).toBe(0xA)
       expect(r.read('bits4')).toBe(0xB)
       expect(r.read('bits4')).toBeNull()
+
+      flushedExpectation [types], ((w) ->
+        w.write('bits4', 0xA)
+      ), [0xA0]
+      flushedExpectation [types], ((w) ->
+        w.write('bits4', 0xA)
+        w.write('bits4', 0xB)
+      ), [0xAB]
 
     it 'should read bits with function length', ->
       types =
@@ -128,7 +185,7 @@ describe 'Types', ->
   ###########################################################################
 
   describe 'Record type', ->
-    it 'should read records', ->
+    it 'should read/write records', ->
       types =
         sampleAlias: 'UInt8'
         SampleRec1: ['Record',
@@ -147,16 +204,28 @@ describe 'Types', ->
       expect(r.tell()).toBe(0)
       expect(r.availableBytes()).toBe(1)
 
+      flushedExpectation [types], ((w) ->
+        w.write('SampleRec1',
+          field1: 0xAB
+          field2: 0xFF
+        )
+      ), [0xAB, 0xFF]
+
   ###########################################################################
 
   describe 'Const type', ->
-    it 'should read const', ->
+    it 'should read/write const', ->
       types =
         magic: ['Const', ['Bytes', 4], [0x0A, 0x0B, 0x0C, 0x0D]]
       r = new TypedReaderNodeBuffer(types)
       b = new Buffer([0x0A, 0x0B, 0x0C, 0x0D])
       r.pushBuffer(b)
       expect(r.read('magic')).toEqual([0x0A, 0x0B, 0x0C, 0x0D])
+
+      flushedExpectation [types], ((w) ->
+        w.write('magic')
+      ), [0x0A, 0x0B, 0x0C, 0x0D]
+
 
     it 'should throw ConstError on mismatch', ->
       types =
@@ -178,8 +247,11 @@ describe 'Types', ->
 
     it 'should call expected callback', ->
       cb = (value, context) ->
-        expect(value).toEqual([0x0A, 0x0B, 0x0C, 0x0D])
-        return 'balli'
+        if value == null
+          return 'fnord'
+        else
+          expect(value).toEqual([0x0A, 0x0B, 0x0C, 0x0D])
+          return 'balli'
       types =
         magic: ['Const', ['Bytes', 4], cb]
       r = new TypedReaderNodeBuffer(types)
@@ -187,15 +259,23 @@ describe 'Types', ->
       r.pushBuffer(b)
       expect(r.read('magic')).toBe('balli')
 
+      flushedExpectation [types], ((w) ->
+        w.write('magic')
+      ), [0x66, 0x6e, 0x6f, 0x72, 0x64]
+
   ###########################################################################
   describe 'Array type', ->
-    it 'should read constant length elements', ->
+    it 'should read/write constant length elements', ->
       types =
         items: ['Array', 3, ['String0', 100]]
       r = new TypedReaderNodeBuffer(types)
       b = new Buffer('one\0two\0three\0')
       r.pushBuffer(b)
       expect(r.read('items')).toEqual(['one', 'two', 'three'])
+
+      flushedExpectation1 [types], ((w) ->
+        w.write('items', ['one', 'two', 'three'])
+      ), strBytesArray('one\0two\0three\0')
 
     it 'should read string length elements', ->
       types =
@@ -223,7 +303,7 @@ describe 'Types', ->
 
   ###########################################################################
   describe 'string0 type', ->
-    it 'should read string0', ->
+    it 'should read/write string0', ->
       types =
         myString: ['String0', 100]
         string5: ['String0', 5]
@@ -235,6 +315,11 @@ describe 'Types', ->
       expect(r.read('string5')).toBe('there')
       expect(r.availableBytes()).toBe(0)
 
+      flushedExpectation1 [types], ((w) ->
+        w.write('myString', 'hello')
+        w.write('string5', 'there')
+      ), strBytesArray('hello\0there')
+
     it 'should handle large buffer', ->
       types =
         myString: ['String0', 3000]
@@ -245,9 +330,16 @@ describe 'Types', ->
       expected = b.toString()
       expect(r.read('myString')).toBe(expected)
 
+    it 'should throw on large string', ->
+      types =
+        myString: ['String0', 5]
+      flushedExpectation1 [types], ((w) ->
+        expect(->w.write('myString', '123456')).toThrow()
+      ), []
+
   ###########################################################################
   describe 'string type', ->
-    it 'should read string', ->
+    it 'should read/write string', ->
       types =
         myString: ['String', 5]
       r = new TypedReaderNodeBuffer(types)
@@ -256,6 +348,10 @@ describe 'Types', ->
       expect(r.read('myString')).toBe('foo')
       expect(r.read('myString')).toBeNull()
       expect(r.availableBytes()).toBe(0)
+
+      flushedExpectation1 [types], ((w) ->
+        w.write('myString', 'foo')
+      ), strBytesArray('foo\0\0')
 
   ###########################################################################
 
@@ -299,8 +395,7 @@ describe 'Types', ->
   describe 'Custom type', ->
     it 'should handle a basic custom type', ->
       types =
-        myType: streamtypes.Type
-          name: 'myType'
+        MyType: class MyType extends streamtypes.Type
           read: (reader, context) ->
             len = reader.readUInt8()
             if len == null
@@ -309,19 +404,29 @@ describe 'Types', ->
             if s == null
               return null
             return s
+          write: (writer, value, context) ->
+            # Convert to a buffer first to determine the proper length in its
+            # encoding.
+            b = new Buffer(value)
+            writer.writeUInt8(b.length)
+            writer.writeBuffer(b)
       r = new TypedReaderNodeBuffer(types)
       b = new Buffer('\u0002hi\u0005there')
       r.pushBuffer(b)
-      expect(r.read('myType')).toBe('hi')
-      expect(r.read('myType')).toBe('there')
-      expect(r.read('myType')).toBeNull()
+      expect(r.read('MyType')).toBe('hi')
+      expect(r.read('MyType')).toBe('there')
+      expect(r.read('MyType')).toBeNull()
+
+      flushedExpectation [types], ((w) ->
+        w.write('MyType', 'foo')
+        w.write('MyType', 'there')
+      ), strBytesArray('\u0003foo\u0005there')
 
   describe 'Custom type', ->
     it 'should handle a custom type with arguments', ->
       types =
-        MyType: new streamtypes.Type
-          name: 'myType'
-          setArgs: (@length) ->
+        MyType: class MyType extends streamtypes.Type
+          constructor: (@length) ->
           read: (reader, context) ->
             len = @getLength(reader, context, @length)
             return reader.readString(len)
@@ -335,7 +440,7 @@ describe 'Types', ->
   ###########################################################################
 
   describe 'Switch type', ->
-    it 'should read switched values', ->
+    it 'should read/write switched values', ->
       types =
         swType: ['Switch', ((reader, context) -> context.option),
           Option1: ['UInt8']
@@ -354,6 +459,13 @@ describe 'Types', ->
       r.pushBuffer(b)
       expect(r.read('rec')).toEqual({option: 'Option2', altValue: 'hi'})
 
+      flushedExpectation1 [types], ((w) ->
+        w.write('rec',
+          option: 'Option2'
+          altValue: 'foo'
+        )
+      ), strBytesArray('Option2foo\0')
+
     it 'should handle undefined return', ->
       types =
         swType: ['Switch', ((reader, context) -> undefined),
@@ -367,6 +479,10 @@ describe 'Types', ->
       b = new Buffer('Hi')
       r.pushBuffer(b)
       expect(r.read('rec')).toEqual({altValue: undefined})
+
+      flushedExpectation1 [types], ((w) ->
+        w.write('rec', {})
+      ), []
 
     it 'should complain about missing case', ->
       types =
@@ -382,7 +498,7 @@ describe 'Types', ->
   ###########################################################################
 
   describe 'Extended record type', ->
-    it 'should read records', ->
+    it 'should read/write records', ->
       types =
         h1: ['Record',
           'field1', 'UInt8',
@@ -404,13 +520,22 @@ describe 'Types', ->
       r.pushBuffer(b)
       expect(r.read('thing')).toEqual({field1: 0x0A, field2: 0x0B, field3: 0x0C, field4: 0x0D})
 
+      flushedExpectation [types], ((w) ->
+        w.write('thing',
+          field1: 1
+          field2: 2
+          field3: 3
+          field4: 4)
+      ), [1, 2, 3, 4]
+
     it 'should handle undefined values', ->
       types =
         h1: ['Record',
           'field1', 'UInt8'
         ]
-        h2: new streamtypes.Type
+        h2: class H2 extends streamtypes.Type
           read: (reader, context) -> undefined
+          write: (writer, value, context) ->
         h3: ['Record',
           'field3', 'UInt8'
         ]
@@ -423,6 +548,12 @@ describe 'Types', ->
       b = new Buffer([0x0A, 0x0B, 0x0C, 0x0D])
       r.pushBuffer(b)
       expect(r.read('thing')).toEqual({field1: 0x0A, field3: 0x0B})
+
+      flushedExpectation [types], ((w) ->
+        w.write('thing',
+          field1: 1
+          field3: 3)
+      ), [1, 3]
 
   ###########################################################################
 
@@ -455,3 +586,10 @@ describe 'Types', ->
       r.pushBuffer(b)
       expect(r.read('skipper')).toBeNull()
       expect(r.read('thing')).toEqual({field1: 0x0A, field2: undefined, field3: 0x0C})
+
+      flushedExpectation [types], ((w) ->
+        w.write('thing',
+          field1: 1
+          field2: undefined
+          field3: 3)
+      ), [1, 0, 3]

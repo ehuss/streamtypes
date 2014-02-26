@@ -12,5 +12,34 @@ stop on uncaught
 use "debugger" keyword if necessary.
 
 Tests:
-node --debug-brk .\node_modules\jasmine-node\lib\jasmine-node\cli.js --coffee .\spec\typed_spec.coffee
-jasmine-node --watch src --autotest --coffee spec
+node --debug-brk .\node_modules\jasmine-node\lib\jasmine-node\cli.js --captureExceptions --coffee .\spec\typed_spec.coffee
+jasmine-node --captureExceptions --watch src --autotest --coffee spec
+
+Compression
+===========
+https://github.com/madler/zlib/
+http://www.zlib.net/manual.html
+http://www.zlib.net/zlib_how.html
+https://code.google.com/p/bitjs/source/browse/unzip.js
+http://tools.ietf.org/html/rfc1951 - DEFLATE
+https://code.google.com/p/bitjs/source/browse/io.js
+http://www.gzip.org/algorithm.txt
+ftp://140.118.175.164/efficient%20huffman%20decoding.pdf
+http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.93.9447&rep=rep1&type=pdf
+"Fast decoding of the Huffman codes"
+http://stackoverflow.com/questions/2235208/how-to-decode-huffman-code-quickly
+http://www.compressconsult.com/huffman/
+http://www.rarlab.com/technote.htm
+http://www.pkware.com/documents/casestudies/APPNOTE.TXT
+
+Tar
+===
+http://en.wikipedia.org/wiki/Tar_(computing)
+http://www.gnu.org/software/tar/manual/html_node/Standard.html
+http://pubs.opengroup.org/onlinepubs/9699919799/toc.htm
+
+Binary APIs
+===========
+https://www.npmjs.org/package/binary-parser
+http://tomerfiliba.com/blog/Survey-of-Construct3/
+http://construct.readthedocs.org/en/latest/bitwise.html#bitstruct

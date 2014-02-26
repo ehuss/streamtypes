@@ -1,9 +1,11 @@
 types = require('./types')
-typed = require('./typed')
+reader = require('./reader')
+writer = require('./writer')
 
 includeAll = (mod) ->
   for k, value of mod
     module.exports[k] = value
 
 includeAll(types)
-includeAll(typed)
+includeAll(reader)
+includeAll(writer)

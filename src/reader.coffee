@@ -1,7 +1,7 @@
-# NOTES
+# NOTES/TODO
 # - Support using string buffers.  Can node do this for us?
 # - If you see >>> 0, this is to ensure that integers are treated as unsigned.
-#
+# - Add availableBits
 
 types = require('./types')
 
@@ -13,6 +13,7 @@ class TypedReaderNodeBuffer extends TypedReader
 
   constructor: (@typeDecls = {}, options = {}) ->
     @littleEndian = options.littleEndian ? false
+    # TODO: Change this option to be a string?  Exposing internal state...
     @_bitReader = options.bitReader ? this._bitReaderMost
     # TODO: Moving the current state to be properties of the reader, is that
     # noticeably more efficient?
@@ -25,7 +26,7 @@ class TypedReaderNodeBuffer extends TypedReader
       currentBuffer: null
       currentBufferPos: 0
       position: 0
-    @_states = [@_state]
+    @_states = []
     @_types = new types.Types(typeDecls)
 
   slice: (start=0, end=undefined) ->
@@ -96,12 +97,15 @@ class TypedReaderNodeBuffer extends TypedReader
     return r
 
   pushBuffer: (buffer) ->
-    for state in @_states
+    addBuf = (state, buffer) ->
       if state.currentBuffer == null
         state.currentBuffer = buffer
       else
         state.buffers.push(buffer)
       state.availableBytes += buffer.length
+    for state in @_states
+      addBuf(state, buffer)
+    addBuf(@_state, buffer)
     return
 
   _cloneState: (state) ->
@@ -213,7 +217,7 @@ class TypedReaderNodeBuffer extends TypedReader
 
     if @_state.bitsInBB < numBits
       if numBits > 32
-        throw new Error('This reader cannot handle more than 32 bits.')
+        throw new RangeError('This reader cannot handle more than 32 bits.')
       # Not enough bits in bb.
       # Read what's available.
 
@@ -276,7 +280,7 @@ class TypedReaderNodeBuffer extends TypedReader
 
     return result
 
-  _bitReader16SwappedMost: (numBits, peek) ->
+  _bitReaderMost16Swapped: (numBits, peek) ->
     if @_state.bitsInBB >= numBits
       # Fast path.
       keepBits = @_state.bitsInBB-numBits
@@ -286,8 +290,8 @@ class TypedReaderNodeBuffer extends TypedReader
         @_advanceBB(numBits)
       return result
 
-    if numBits > 53
-      throw new Error("Too many bits: #{numBits}")
+    if numBits > 32
+      throw new RangeError('Cannot write more than 32 bits.')
 
     @saveState()
     result = @_state.bitBuffer
@@ -306,7 +310,7 @@ class TypedReaderNodeBuffer extends TypedReader
       bitsThisTurn = Math.min(16, bitsToRead)
       # Make room.
       result <<= bitsThisTurn
-      result |= @_state.bitBuffer >> (@_state.bitsInBB - bitsThisTurn)
+      result |= @_state.bitBuffer >>> (@_state.bitsInBB - bitsThisTurn)
       @_advanceBB(bitsThisTurn)
       bitsToRead -= bitsThisTurn
 
@@ -451,43 +455,43 @@ class TypedReaderNodeBuffer extends TypedReader
   # @throw {RangeError} Would read past the end of the buffer.
   readUInt32BE: _makeBufferRead(4, Buffer::readUInt32BE, false)
   readUInt32LE: _makeBufferRead(4, Buffer::readUInt32LE, false)
-  readInt8: _makeBufferRead(1, Buffer::readInt8, false)
-  readInt32BE: _makeBufferRead(4, Buffer::readInt32BE, false)
-  readInt32LE: _makeBufferRead(4, Buffer::readInt32LE, false)
-  readInt16BE: _makeBufferRead(2, Buffer::readInt16BE, false)
-  readInt16LE: _makeBufferRead(2, Buffer::readInt16LE, false)
-  readFloatBE: _makeBufferRead(4, Buffer::readFloatBE, false)
-  readFloatLE: _makeBufferRead(4, Buffer::readFloatLE, false)
+  readInt8:     _makeBufferRead(1, Buffer::readInt8, false)
+  readInt16BE:  _makeBufferRead(2, Buffer::readInt16BE, false)
+  readInt16LE:  _makeBufferRead(2, Buffer::readInt16LE, false)
+  readInt32BE:  _makeBufferRead(4, Buffer::readInt32BE, false)
+  readInt32LE:  _makeBufferRead(4, Buffer::readInt32LE, false)
+  readFloatBE:  _makeBufferRead(4, Buffer::readFloatBE, false)
+  readFloatLE:  _makeBufferRead(4, Buffer::readFloatLE, false)
   readDoubleBE: _makeBufferRead(8, Buffer::readDoubleBE, false)
   readDoubleLE: _makeBufferRead(8, Buffer::readDoubleLE, false)
 
   readUInt16: _makeBufferReadDefault(@::readUInt16LE, @::readUInt16BE)
   readUInt32: _makeBufferReadDefault(@::readUInt32LE, @::readUInt32BE)
-  readInt16: _makeBufferReadDefault(@::readInt16LE, @::readInt16BE)
-  readInt32: _makeBufferReadDefault(@::readInt32LE, @::readInt32BE)
-  readFloat: _makeBufferReadDefault(@::readFloatLE, @::readFloatBE)
+  readInt16:  _makeBufferReadDefault(@::readInt16LE, @::readInt16BE)
+  readInt32:  _makeBufferReadDefault(@::readInt32LE, @::readInt32BE)
+  readFloat:  _makeBufferReadDefault(@::readFloatLE, @::readFloatBE)
   readDouble: _makeBufferReadDefault(@::readDoubleLE, @::readDoubleBE)
 
 
-  peekUInt8: _makeBufferRead(1, Buffer::readUInt8, true)
+  peekUInt8:    _makeBufferRead(1, Buffer::readUInt8, true)
   peekUInt16BE: _makeBufferRead(2, Buffer::readUInt16BE, true)
   peekUInt16LE: _makeBufferRead(2, Buffer::readUInt16LE, true)
   peekUInt32BE: _makeBufferRead(4, Buffer::readUInt32BE, true)
   peekUInt32LE: _makeBufferRead(4, Buffer::readUInt32LE, true)
-  peekInt8: _makeBufferRead(1, Buffer::readInt8, true)
-  peekInt32BE: _makeBufferRead(4, Buffer::readInt32BE, true)
-  peekInt32LE: _makeBufferRead(4, Buffer::readInt32LE, true)
-  peekInt16BE: _makeBufferRead(2, Buffer::readInt16BE, true)
-  peekInt16LE: _makeBufferRead(2, Buffer::readInt16LE, true)
-  peekFloatBE: _makeBufferRead(4, Buffer::readFloatBE, true)
-  peekFloatLE: _makeBufferRead(4, Buffer::readFloatLE, true)
+  peekInt8:     _makeBufferRead(1, Buffer::readInt8, true)
+  peekInt32BE:  _makeBufferRead(4, Buffer::readInt32BE, true)
+  peekInt32LE:  _makeBufferRead(4, Buffer::readInt32LE, true)
+  peekInt16BE:  _makeBufferRead(2, Buffer::readInt16BE, true)
+  peekInt16LE:  _makeBufferRead(2, Buffer::readInt16LE, true)
+  peekFloatBE:  _makeBufferRead(4, Buffer::readFloatBE, true)
+  peekFloatLE:  _makeBufferRead(4, Buffer::readFloatLE, true)
   peekDoubleBE: _makeBufferRead(8, Buffer::readDoubleBE, true)
   peekDoubleLE: _makeBufferRead(8, Buffer::readDoubleLE, true)
   peekUInt32: _makeBufferReadDefault(@::peekUInt32LE, @::peekUInt32BE)
   peekUInt16: _makeBufferReadDefault(@::peekUInt16LE, @::peekUInt16BE)
-  peekInt32: _makeBufferReadDefault(@::peekInt32LE, @::peekInt32BE)
-  peekInt16: _makeBufferReadDefault(@::peekInt16LE, @::peekInt16BE)
-  peekFloat: _makeBufferReadDefault(@::peekFloatLE, @::peekFloatBE)
+  peekInt32:  _makeBufferReadDefault(@::peekInt32LE, @::peekInt32BE)
+  peekInt16:  _makeBufferReadDefault(@::peekInt16LE, @::peekInt16BE)
+  peekFloat:  _makeBufferReadDefault(@::peekFloatLE, @::peekFloatBE)
   peekDouble: _makeBufferReadDefault(@::peekDoubleLE, @::peekDoubleBE)
 
 

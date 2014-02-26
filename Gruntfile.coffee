@@ -1,3 +1,5 @@
+path = require('path')
+
 module.exports = (grunt) ->
 
   ###############################################################
@@ -10,10 +12,21 @@ module.exports = (grunt) ->
   grunt.loadNpmTasks('grunt-coffeelint')
   grunt.loadNpmTasks('grunt-browserify')
   grunt.loadNpmTasks('grunt-codo')
+  grunt.loadNpmTasks('grunt-shell')
 
   ###############################################################
   # Config
   ###############################################################
+  # Deal with win32 platform paths.
+  jasmineNodeOpt = ' --captureExceptions --coffee spec'
+  jasmineNodeCmd = path.normalize('./node_modules/.bin/jasmine-node')
+  jasmineNodeCli = path.normalize('./node_modules/jasmine-node/lib/jasmine-node/cli.js')
+
+  shellOptions =
+    stdout: true
+    stderr: true
+    failOnError: true
+
   grunt.initConfig
 
     pkg: grunt.file.readJSON('package.json')
@@ -46,11 +59,6 @@ module.exports = (grunt) ->
     coffeelint:
       files: ['src/**/*.coffee', 'spec/**/*.coffee']
       options:
-        colon_assignment_spacing:
-          level: 'warn'
-          spacing:
-            left: 0
-            right: 1
         empty_constructor_needs_parens:
           level: 'error'
         line_endings:
@@ -63,8 +71,22 @@ module.exports = (grunt) ->
       options:
         title: 'streamtypes API Documentation'
 
+    shell:
+      jasmine:
+        options: shellOptions
+        command: jasmineNodeCmd + jasmineNodeOpt
+      jasmine_watch:
+        options: shellOptions
+        command: jasmineNodeCmd + jasmineNodeOpt + ' --watch src --autotest'
+      jasmine_debug:
+        options: shellOptions
+        command: 'node --debug-brk ' + jasmineNodeCli + jasmineNodeOpt
+
   ###############################################################
   # Tasks
   ###############################################################
 
   grunt.registerTask('default', ['browserify', 'coffee'])
+  grunt.registerTask('jasmine', ['shell:jasmine'])
+  grunt.registerTask('jasmine_watch', ['shell:jasmine_watch'])
+  grunt.registerTask('jasmine_debug', ['shell:jasmine_debug'])

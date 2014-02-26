@@ -3,6 +3,7 @@ TypedReaderNodeBuffer = streamtypes.TypedReaderNodeBuffer
 
 # TODO
 # - partition more methods.
+# - bitreadermost16swapped
 
 partition = (seq) ->
   if not seq.length
@@ -275,3 +276,40 @@ describe 'TypedReaderNodeBuffer', ->
       expect(r3.tell()).toBe(0)
       expect(r3.availableBytes()).toBe(15)
       expect(r3.readBytes(15)).toEqual([5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19])
+
+  describe 'States', ->
+    it 'should save and restore state', ->
+      r = new TypedReaderNodeBuffer()
+      b = new Buffer([0, 1])
+      r.pushBuffer(b)
+      b = new Buffer([2, 3])
+      r.pushBuffer(b)
+      r.saveState()
+      expect(r.readUInt8()).toBe(0)
+      expect(r.tell()).toBe(1)
+      expect(r.readUInt8()).toBe(1)
+      expect(r.readUInt8()).toBe(2)
+      expect(r.tell()).toBe(3)
+      b = new Buffer([4, 5])
+      r.pushBuffer(b)
+      expect(r.readUInt8()).toBe(3)
+      expect(r.readUInt8()).toBe(4)
+      expect(r.tell()).toBe(5)
+      r.restoreState()
+      expect(r.tell()).toBe(0)
+      expect(r.readUInt8()).toBe(0)
+
+    it 'should save and restore from empty state', ->
+      r = new TypedReaderNodeBuffer()
+      expect(r.readUInt8()).toBeNull()
+      debugger
+      r.saveState()
+      b = new Buffer([0, 1])
+      r.pushBuffer(b)
+      expect(r.readUInt8()).toBe(0)
+      expect(r.tell()).toBe(1)
+      r.restoreState()
+      expect(r.tell()).toBe(0)
+      expect(r.readUInt8()).toBe(0)
+
+

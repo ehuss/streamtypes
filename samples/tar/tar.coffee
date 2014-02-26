@@ -31,16 +31,22 @@ extend = (obj, sources...) ->
 
 types =
 
-  AsciiNum: streamtypes.Type
-    setArgs: (@numBytes, @base) ->
+  AsciiNum: class AsciiNum extends streamtypes.Type
+    constructor: (@numBytes, @base) ->
       @sizeBits = numBytes*8
-      return
     read: (reader, context) ->
       s = reader.readString(@numBytes)
+      if s == null
+        return null
       return parseInt(s, @base)
 
-  Octal: ['AsciiNum', 8]
-  DecNum: ['AsciiNum', 10]
+  Octal: class Octal extends AsciiNum
+    constructor: (@numBytes) ->
+      super(numBytes, 8)
+
+  DecNum: class DecNum extends AsciiNum
+    constructor: (@numBytes) ->
+      super(numBytes, 10)
 
   CommonHeader: ['Record',
     'name',     ['String', 100],
@@ -81,18 +87,33 @@ types =
                   'numbytes', ['Octal', 12]
                 ]],
     'isextended', 'UInt8',
-    'realsize', ['DecNum', 12]
+    'realsize', ['DecNum', 12],
+    'padding', ['SkipBytes', 17]
   ]
 
 
+
+# Sample tar file reader.
+#
+# This is an event emitter.  You start by passing a readable stream to the
+# {TarReader#processStream} method.  Register to receive the following events
+# with the `on` method:
+#
+# - 'newFile': Passed a header object describing the file.
+# - 'data': Passed a buffer with a chunk of data for the file.
+# - 'fileEnd': Triggered when the current file is done.
+# - 'end': Triggered once all files in the tar archive have been processed.
+# - 'error': Some error occurred.
 class TarReader extends EventEmitter
 
   constructor: ->
-    @_nextStates = []
     @_currentState = @_sHeader
 
+  # Prime this reader to start processing a tar stream.
+  #
+  # @param readableStream {stream.Readable} The stream to read from.
   processStream: (readableStream) ->
-    @_reader = streamtypes.TypedReaderNodeBuffer(types)
+    @_reader = new streamtypes.TypedReaderNodeBuffer(types)
     onData = (chunk) => @_processChunk(chunk)
     onEnd = => @_processEnd()
     readableStream.on('data', onData)
@@ -102,38 +123,69 @@ class TarReader extends EventEmitter
       readableStream.removeListener('end', onEnd)
     return
 
+  # Processes a single chunk from the input stream.
   _processChunk: (chunk) ->
     @_reader.pushBuffer(chunk)
-    @_currentState()
+    @_runStates()
     return
 
+  # Handles the event when the input stream indicates the end of the file has
+  # been reached.
   _processEnd: ->
-    if @_reader.availableBytes() or @_bytesRemaining
-      @on('error', new Error('Truncated tar file.'))
+    if @_currentState == null
+      # end event already emitted.
+      return
+    if @_reader.availableBytes() or not @_currentState==@_sHeader
+      @emit('error', new Error('Truncated tar file.'))
     @emit('end')
     return
 
+  # Execute current state.
+  #
+  # This loops until the state indicates we need to wait for more data by
+  # returning a falsy value.
+  _runStates: ->
+    while @_currentState
+      if not @_currentState()
+        break
+    return
+
+  # Switch to a new state.
+  #
+  # For convenience, states should return the return value of this to tell
+  # runStates that it should continue processing.
+  _gotoNextState: (state) ->
+    @_currentState = state
+    return true
+
+  # Parse state Header.
   _sHeader: ->
     # Check for null end-of-archive.
     raw = @_reader.peekBuffer(512)
     if raw == null
       return
     if @_isNullBlock(raw)
-      @_currentState = @_sLastBlock
-      return @_currentState()
-
-    @_verifyChecksum(header.checksum, raw)
+      return @_gotoNextState(@_sLastBlock)
 
     header = @_reader.read('CommonHeader')
+    @_verifyChecksum(header.checksum, raw)
+
     header.tartype = @_determineTarType()
-    if header.tartype == 'ustar'
-      extend(header, @_reader.read('UStarHeader'))
-    else if header.tartype == 'gnutar'
-      extend(header, @_reader.read('GNUtarHeader'))
-    @_currentState = @_sReadFile
-    @_bytesRemaining = header.size
+    switch header.tartype
+      when 'ustar'
+        extend(header, @_reader.read('UStarHeader'))
+      when 'gnutar'
+        extend(header, @_reader.read('GNUtarHeader'))
+      when 'tar'
+        @_reader.skipBytes(255)
+    @_fileBytesRemaining = header.size
+    @_filePaddingRemaining = (512-(header.size%512))%512
+    if header.prefix
+      header.pathname = header.prefix + '/' + header.name
+    else
+      header.pathname = header.name
     @emit('newFile', header)
-    return @_currentState()
+    return @_gotoNextState(@_sReadFile)
 
   _determineTarType: ->
     magic = @_reader.peekString(8, 'utf8', false)
@@ -151,11 +203,13 @@ class TarReader extends EventEmitter
         return false
     return true
 
+  # Parse state reading the last terminating null block.
   _sLastBlock: ->
     raw = @_reader.readBuffer(512)
     if raw == null
       return
     @emit('end')
+    @_currentState = null
     return
 
   _verifyChecksum: (expectedChecksum, buffer) ->
@@ -170,19 +224,32 @@ class TarReader extends EventEmitter
     if check == expectedChecksum
       return
     # Could check for broken signed checksum here.
-    throw new Error('Corrupt tar file, checksum does not match.')
+    throw new Error("Corrupt tar file, checksum #{check} does not match expected value #{expectedChecksum}.")
 
+  # Parse state reading the file data.
   _sReadFile: ->
-    while @_bytesRemaining
-      chunk = @_reader.readBuffer(512)
-      if chunk == null
-        return
-      if @_bytesRemaining < 512
-        chunk = chunk[0...@_bytesRemaining]
-      @emit('data', chunk)
-      @_bytesRemaining -= chunk.length
-    @emit('fileEnd')
-    @_currentState = @_sHeader
-    return @_currentState()
 
+    while @_fileBytesRemaining
+      numBytes = Math.min(@_fileBytesRemaining, @_reader.availableBytes())
+      if not numBytes
+        return
+      chunk = @_reader.readBuffer(numBytes)
+      if chunk == null
+        throw new Error("Internal error, couldn't read #{numBytes} bytes.")
+      @emit('data', chunk)
+      @_fileBytesRemaining -= chunk.length
+    return @_gotoNextState(@_sReadFilePadding)
+
+  # Parse state reading the padding at the end of a file.
+  _sReadFilePadding: ->
+    while @_filePaddingRemaining
+      numBytes = Math.min(@_filePaddingRemaining, @_reader.availableBytes())
+      if not numBytes
+        return
+      @_reader.skipBytes(numBytes)
+      @_filePaddingRemaining -= numBytes
+    @emit('fileEnd')
+    return @_gotoNextState(@_sHeader)
+
+exports.types = types
 exports.TarReader = TarReader
