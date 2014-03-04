@@ -44,6 +44,7 @@ class Types
   constructor: (@typeDecls) ->
     @typeMap = {}
     @typeConstructors = {}
+
     for key, value of basicTypes
       value.prototype.name = key
       @typeMap[key] = new value()
@@ -79,6 +80,8 @@ class Types
 
     # Process the user's type declarations.
     for key, typeDecl of @typeDecls
+      if key == 'StreamTypeOptions'
+        continue
       if typeof typeDecl == 'string'
         t = @typeMap[typeDecl]
         if t
@@ -275,27 +278,23 @@ basicTypes =
 
 
 # TODO
-# char?
-# string(length, encoding), string0?
 # buffer(length)
-# ['if', <condition>, <trueType>, <falseType>]
-#    condition is a callback, or string to another property in a context
 #
 
-
-
-
-constructorTypes =
-  Bits: class BitsType extends Type
+makeBitsType = (readFunc, writeFunc)
+  class BitsType extends Type
     constructor: (@numBits) ->
       if typeof numBits == 'number'
         @sizeBits = numBits
     read: (reader, context) ->
       length = @getLength(reader, context, @numBits)
-      return reader.readBits(length)
+      return reader[readFunc](length)
     write: (writer, value, context) ->
       length = @getLength(null, context, @numBits)
-      return writer.writeBits(value, length)
+      return writer[writeFunc](length)
+
+constructorTypes =
+  Bits: makeBitsType('readBits', 'writeBits')
 
   Bytes: class BytesType extends Type
     constructor: (@numBytes) ->
@@ -336,7 +335,9 @@ constructorTypes =
   # Only suitable for certain encodings (does not work with utf-16 for
   # example).
   String0: class String0Type extends Type
-    constructor: (@maxBytes, @encoding='utf8') ->
+    constructor: (@maxBytes, @options={}) ->
+      @encoding = @options.encoding ? 'utf8'
+      @failAtMaxBytes = @options.failAtMaxBytes ? false
     read: (reader, context) ->
       length = @getLength(reader, context, @maxBytes)
       reader.saveState()
@@ -363,6 +364,8 @@ constructorTypes =
               buffer.copy(newBuffer)
               buffer = newBuffer
         # Ran out of bytes.
+        if @failAtMaxBytes
+          throw new RangeError("Did not find null string terminator within #{@maxBytes} bytes.")
         reader.discardState()
         return buffer.toString(@encoding, 0, bufferUsed)
       catch e
@@ -560,7 +563,6 @@ constructorTypes =
 
   SkipBytes: class SkipBytesType extends Type
     constructor: (@numBytes, @fill=0) ->
-      @sizeBits = numBytes*8
     read: (reader, context) ->
       num = @getLength(reader, context, @numBytes)
       if reader.availableBytes() < num
@@ -572,6 +574,66 @@ constructorTypes =
       buf = new Buffer(num)
       buf.fill(0)
       return writer.writeBuffer(buf)
+
+  Flags: class FlagsType extends Type
+    constructor: (@dataTypeDecl, @flagNames...) ->
+    resolveTypes: (types) ->
+      @dataType = types.toType(@dataTypeDecl)
+      return
+    read: (reader, context) ->
+      data = @dataType.read(reader, context)
+      if data == null
+        return null
+      result = {originalData: data}
+      mask = 1
+      for name in @flagNames
+        result[name] = !! (data & mask)
+        mask <<= 1
+      return result
+    write: (writer, value, context) ->
+      if typeof value == 'object'
+        # Assume an object as returned by read.
+        result = 0
+        mask = 1
+        for name in @flagNames
+          if value[name]
+            result |= mask
+          mask <<= 1
+      else
+        result = value
+      @dataType.write(writer, result, context)
+      return
+
+  # TODO
+  # Map: class MapType extends Type
+  #   constructor: (@dataTypeDecl, @typeMap) ->
+  #   resolveTypes: (types) ->
+  #     @dataType = types.toType(@dataTypeDecl)
+  #     return
+  #   read: (reader, context) ->
+
+  If: class IfType extends Type
+    constructor: (@conditional, @trueTypeDecl, @falseTypeDecl) ->
+    resolveTypes: (types) ->
+      @trueType = if @trueTypeDecl then types.toType(@trueTypeDecl) else null
+      @falseType = if @falseTypeDecl then types.toType(@falseTypeDecl) else null
+    read: (reader, context) ->
+      if @conditional(reader, context)
+        if @trueType
+          return @trueType.read(reader, context)
+      else
+        if @falseType
+          return @falseType.read(reader, context)
+      return undefined
+    write: (writer, value, context) ->
+      if @conditional(null, context)
+        if @trueType
+          return @trueType.write(writer, value, context)
+      else
+        if @falseType
+          return @falseType.write(writer, value, context)
+      return
+
 
 exports.Types = Types
 exports.Type = Type

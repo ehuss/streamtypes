@@ -1,3 +1,17 @@
+# Supporting multiple types of bit writers:
+# - How to flush?  Could keep track of the last bit write type.  If type changes, do a flush of the last type.
+# - Hmm....don't want to flush with deflate, since huffman=most, header=least, and they are intermixed within bytes.
+#   - Research how zlib implements this.
+# Alternatives:
+# - I like the idea of keeping things extensible.  But making the reader extensible would be very challenging.
+#   - Needs to be able to _advancePosition when each 8 bits of the buffer are consumed.  skipBytes can't be used (due to alignment call).
+#
+# - Maybe reading bits should always be bytewise?  Is reading 32 bits really more efficient?
+#
+#
+
+
+
 types = require('./types')
 EventEmitter = require('events').EventEmitter
 
@@ -38,7 +52,7 @@ class BitWriterMost
 # TODO
 # class BitWriterMost
 
-class BitWriterMost16Swapped
+class BitWriterMost16LE
   constructor: (@writer) ->
     @_bitsInBB = 0
     @_bitBuffer = 0
@@ -70,7 +84,7 @@ class TypedWriter extends EventEmitter
 
 class TypedWriterNodeBuffer extends TypedWriter
   constructor: (@typeDecls = {}, options = {}) ->
-    @littleEndian = options.littleEndian ? false
+    @littleEndian = options.littleEndian ? @typeDecls.StreamTypeOptions?.littleEndian ? false
     @bufferSize = Math.max(options.bufferSize ? 32768, 8)
     # TODO:
     # - Comment on what the invariants are (buffer==null then pos==0,  buffer!=null, then availableBytes > 0, etc.)
@@ -81,7 +95,7 @@ class TypedWriterNodeBuffer extends TypedWriter
     @_currentBufferPos = 0
     @_availableBytes = 0
     @_bytesWritten = 0
-    @_types = new types.Types(typeDecls)
+    @_types = new types.Types(@typeDecls)
 
   tell: ->
     return @_bytesWritten
@@ -196,4 +210,4 @@ class TypedWriterNodeBuffer extends TypedWriter
 
 exports.TypedWriterNodeBuffer = TypedWriterNodeBuffer
 exports.BitWriterMost = BitWriterMost
-exports.BitWriterMost16Swapped = BitWriterMost16Swapped
+exports.BitWriterMost16LE = BitWriterMost16LE

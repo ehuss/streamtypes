@@ -3,7 +3,7 @@ TypedReaderNodeBuffer = streamtypes.TypedReaderNodeBuffer
 
 # TODO
 # - partition more methods.
-# - bitreadermost16swapped
+# - bitreader option
 
 partition = (seq) ->
   if not seq.length
@@ -134,15 +134,15 @@ describe 'TypedReaderNodeBuffer', ->
       r.pushBuffer(b)
       expect(r.peekUInt8()).toBe(0b10011101)
       expect(r.readBits(3)).toBe(0b100)
-      expect(r.peekUInt8()).toBe(0b10011101)
+      expect(->r.peekUInt8()).toThrow()
       expect(r.readBits(4)).toBe(0b1110)
-      expect(r.peekUInt8()).toBe(0b10011101)
+      expect(->r.peekUInt8()).toThrow()
       expect(r.readBits(1)).toBe(0b1)
       expect(r.peekUInt8()).toBe(0b00100001)
       expect(r.readBits(1)).toBe(0b0)
-      expect(r.peekUInt8()).toBe(0b00100001)
+      expect(->r.peekUInt8()).toThrow()
       expect(r.readBits(8)).toBe(0b01000010)
-      expect(r.peekUInt8()).toBe(0b01010101)
+      expect(->r.peekUInt8()).toThrow()
       expect(r.readBits(8)).toBeNull()
       expect(r.readBits(7)).toBe(0b1010101)
       expect(r.peekUInt8()).toBeNull()
@@ -158,29 +158,53 @@ describe 'TypedReaderNodeBuffer', ->
         expect(r.peekBits(32)).toBe(0b11111111111111111111111111111111)
         expect(r.peekBits(1)).toBe(1)
 
-    it '_bitReaderMost should read 4 bytes at a time', ->
+    it 'most should read 4 bytes at a time', ->
       bufferPartition [0b11111111, 0b10000000, 0b10101010, 0b01010101], (r) ->
         expect(r.peekBits(8)).toBe(0b11111111)
         expect(r.readBits(32)).toBe(0b11111111100000001010101001010101)
         expect(r.readBits(1)).toBeNull()
 
-    it '_bitReaderMost should read 3 bytes at a time', ->
+    it 'most should read 3 bytes at a time', ->
       bufferPartition [0b11111111, 0b10000000, 0b10101010], (r) ->
         expect(r.peekBits(8)).toBe(0b11111111)
         expect(r.readBits(24)).toBe(0b111111111000000010101010)
         expect(r.readBits(1)).toBeNull()
 
-    it '_bitReaderMost should read 2 bytes at a time', ->
+    it 'most should read 2 bytes at a time', ->
       bufferPartition [0b11111111, 0b10000000], (r) ->
         expect(r.peekBits(8)).toBe(0b11111111)
         expect(r.readBits(16)).toBe(0b1111111110000000)
         expect(r.readBits(1)).toBeNull()
 
-    it '_bitReaderMost should read 1 bytes at a time', ->
+    it 'most should read 1 bytes at a time', ->
       bufferPartition [0b10101010], (r) ->
         expect(r.peekBits(8)).toBe(0b10101010)
         expect(r.readBits(8)).toBe(0b10101010)
         expect(r.readBits(1)).toBeNull()
+
+    it 'should handle intermixed bits and byte reads', ->
+      bufferPartition [0b11001010, 0b10100101, 0b10101010], (r) ->
+        expect(r.readBits(1)).toBe(1)
+        expect(->r.readUInt8()).toThrow()
+        expect(r.readBits(7)).toBe(0b1001010)
+        expect(r.readUInt8()).toBe(0b10100101)
+        expect(r.readBits(8)).toBe(0b10101010)
+        expect(r.availableBytes()).toBe(0)
+        expect(r.availableBits()).toBe(0)
+        expect(r.currentBitAlignment()).toBe(0)
+
+  describe 'currentBitAlignment', ->
+    it 'should return number of bits to read to achieve alignment', ->
+      r = new TypedReaderNodeBuffer()
+      b = new Buffer([0b10011101, 0b00100001])
+      r.pushBuffer(b)
+      expect(r.currentBitAlignment()).toBe(0)
+      expect(r.readBits(1)).toBe(1)
+      expect(r.currentBitAlignment()).toBe(7)
+      expect(r.readBits(6)).toBe(0b001110)
+      expect(r.currentBitAlignment()).toBe(1)
+      expect(r.readBits(1)).toBe(1)
+      expect(r.currentBitAlignment()).toBe(0)
 
   describe 'Positioning', ->
     it 'should seek', ->
@@ -302,7 +326,6 @@ describe 'TypedReaderNodeBuffer', ->
     it 'should save and restore from empty state', ->
       r = new TypedReaderNodeBuffer()
       expect(r.readUInt8()).toBeNull()
-      debugger
       r.saveState()
       b = new Buffer([0, 1])
       r.pushBuffer(b)

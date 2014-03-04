@@ -10,7 +10,7 @@ describe 'TypedWriterNodeBuffer', ->
   describe 'Basic writes', ->
 
     it 'should write basic types', ->
-      flushedExpectation null, ((w) ->
+      flushedExpectation [], ((w) ->
         w.writeUInt8(0)
         w.writeUInt16BE(0x0102)
         w.writeUInt16LE(0x0102)
@@ -41,67 +41,67 @@ describe 'TypedWriterNodeBuffer', ->
             0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xef, 0x7f]
 
     it 'should write strings', ->
-      flushedExpectation null, ((w) ->
+      flushedExpectation [], ((w) ->
         w.writeString('hello')
         ), [0x68, 0x65, 0x6c, 0x6c, 0x6f]
 
-      flushedExpectation null, ((w) ->
+      flushedExpectation [], ((w) ->
         w.writeString('hello', 'utf16le')
         ), [0x68, 0x00, 0x65, 0x00, 0x6c, 0x00, 0x6c, 0x00, 0x6f, 0x00]
 
     it 'should write bytes', ->
-      flushedExpectation null, ((w) ->
+      flushedExpectation [], ((w) ->
         w.writeBytes([1, 2, 3, 4, 5])
         ), [1, 2, 3, 4, 5]
 
   describe 'Bit writing', ->
     it 'should write bits', ->
-      flushedExpectation null, ((w) ->
+      flushedExpectation [], ((w) ->
         w.writeBits(1, 1)
         ), [0x80]
-      flushedExpectation null, ((w) ->
+      flushedExpectation [], ((w) ->
         w.writeBits(0b10101010, 8)
         ), [0b10101010]
-      flushedExpectation null, ((w) ->
+      flushedExpectation [], ((w) ->
         w.writeBits(0b1010101011111111, 16)
         ), [0b10101010, 0b11111111]
-      flushedExpectation null, ((w) ->
+      flushedExpectation [], ((w) ->
         w.writeBits(0b10101010111111110101010100000000, 32)
         ), [0b10101010, 0b11111111, 0b01010101, 0]
-      flushedExpectation null, ((w) ->
+      flushedExpectation [], ((w) ->
         w.writeBits(0xFFFFFFFF, 32)
         ), [0xFF, 0xFF, 0xFF, 0xFF]
-      flushedExpectation null, ((w) ->
+      flushedExpectation [], ((w) ->
         w.writeBits(1, 1)
         w.writeBits(0, 1)
         ), [0b10000000]
-      flushedExpectation null, ((w) ->
+      flushedExpectation [], ((w) ->
         w.writeBits(1, 1)
         w.writeBits(0, 1)
         w.writeBits(0b11110000, 8)
         ), [0b10111100, 0]
 
-    it 'should write 16-bit swapped bytes', ->
-      flushedExpectation [null, {bitWriter:streamtypes.BitWriterMost16Swapped}], ((w) ->
+    it 'should write 16-bit LE bytes', ->
+      flushedExpectation [{}, {bitWriter:streamtypes.BitWriterMost16LE}], ((w) ->
         w.writeBits(1, 1)
         ), [0, 0x80]
-      flushedExpectation [null, {bitWriter:streamtypes.BitWriterMost16Swapped}], ((w) ->
+      flushedExpectation [{}, {bitWriter:streamtypes.BitWriterMost16LE}], ((w) ->
         w.writeBits(0b10101010, 8)
         ), [0, 0b10101010]
-      flushedExpectation [null, {bitWriter:streamtypes.BitWriterMost16Swapped}], ((w) ->
+      flushedExpectation [{}, {bitWriter:streamtypes.BitWriterMost16LE}], ((w) ->
         w.writeBits(0b1010101011111111, 16)
         ), [0b11111111, 0b10101010]
-      flushedExpectation [null, {bitWriter:streamtypes.BitWriterMost16Swapped}], ((w) ->
+      flushedExpectation [{}, {bitWriter:streamtypes.BitWriterMost16LE}], ((w) ->
         w.writeBits(0b10101010111111110101010100000000, 32)
         ), [0b11111111, 0b10101010, 0, 0b01010101]
-      flushedExpectation [null, {bitWriter:streamtypes.BitWriterMost16Swapped}], ((w) ->
+      flushedExpectation [{}, {bitWriter:streamtypes.BitWriterMost16LE}], ((w) ->
         w.writeBits(0xFFFFFFFF, 32)
         ), [0xFF, 0xFF, 0xFF, 0xFF]
-      flushedExpectation [null, {bitWriter:streamtypes.BitWriterMost16Swapped}], ((w) ->
+      flushedExpectation [{}, {bitWriter:streamtypes.BitWriterMost16LE}], ((w) ->
         w.writeBits(1, 1)
         w.writeBits(0, 1)
         ), [0, 0b10000000]
-      flushedExpectation [null, {bitWriter:streamtypes.BitWriterMost16Swapped}], ((w) ->
+      flushedExpectation [{}, {bitWriter:streamtypes.BitWriterMost16LE}], ((w) ->
         w.writeBits(1, 1)
         w.writeBits(0, 1)
         w.writeBits(0b11110000, 8)
@@ -109,16 +109,16 @@ describe 'TypedWriterNodeBuffer', ->
 
   describe 'Options', ->
     it 'should handle littleEndian option', ->
-      flushedExpectation [null, {littleEndian: true}], ((w) ->
+      flushedExpectation [{}, {littleEndian: true}], ((w) ->
           w.writeUInt32(0x01020304)
         ), [4, 3, 2, 1]
 
-      flushedExpectation [null, {littleEndian: false}], ((w) ->
+      flushedExpectation [{}, {littleEndian: false}], ((w) ->
           w.writeUInt32(0x01020304)
         ), [1, 2, 3, 4]
 
     it 'should handle buffersize option', ->
-      flushedExpectations [null, {bufferSize: 8}], ((w) ->
+      flushedExpectations [{}, {bufferSize: 8}], ((w) ->
         w.writeBuffer(Buffer([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]))
         expect(w.tell()).toBe(10)
         w.writeBuffer(Buffer([0, 1, 2, 3, 4, 5]))

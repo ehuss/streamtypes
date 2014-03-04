@@ -17,7 +17,12 @@
 # The libarchive project has a lot of good documentation.  A detailed
 # discussion of the file format is at
 # <https://github.com/libarchive/libarchive/wiki/ManPageTar5>.
-
+#
+# The pax format is documented in IEEE 1003.1:
+# pubs.opengroup.org/onlinepubs/9699919799/utilities/pax.html
+#
+# The GNU tar documentation has some information on its format:
+# http://www.gnu.org/software/tar/manual/html_node/Standard.html
 
 streamtypes = require('../../src/index')
 EventEmitter = require('events').EventEmitter

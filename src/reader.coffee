@@ -1,7 +1,15 @@
 # NOTES/TODO
 # - Support using string buffers.  Can node do this for us?
 # - If you see >>> 0, this is to ensure that integers are treated as unsigned.
-# - Add availableBits
+# - the bits methods are currently completely independent of the other methods.  This is suboptimal.  Some options:
+#    - Once unaligned, should readxxx methods read unaligned?  This would be somewhat complicated.
+#       Alternatives:
+#       - Leave as is, a little confusing.
+#       - Raise unaligned error.
+#       - Throw away bit data?  Seems terrible.
+#       - Force alignment?  Seems terrible.
+#    - When aligned, but multiple of 8 still in bit buffer, readxxx should clear the bit buffer.
+#    -
 
 types = require('./types')
 
@@ -12,9 +20,14 @@ class TypedReader
 class TypedReaderNodeBuffer extends TypedReader
 
   constructor: (@typeDecls = {}, options = {}) ->
-    @littleEndian = options.littleEndian ? false
-    # TODO: Change this option to be a string?  Exposing internal state...
-    @_bitReader = options.bitReader ? this._bitReaderMost
+    @littleEndian = options.littleEndian ? @typeDecls.StreamTypeOptions?.littleEndian ? false
+    switch options.bitReader ? @typeDecls.StreamTypeOptions?.bitReader
+      when 'least'
+        @_defaultBitReader = this.readBitsLeast
+      when 'most16le'
+        @_defaultBitReader = this.readBitsMost16LE
+      else
+        @_defaultBitReader = this.readBitsMost
     # TODO: Moving the current state to be properties of the reader, is that
     # noticeably more efficient?
     @_state =
@@ -27,14 +40,14 @@ class TypedReaderNodeBuffer extends TypedReader
       currentBufferPos: 0
       position: 0
     @_states = []
-    @_types = new types.Types(typeDecls)
+    @_types = new types.Types(@typeDecls)
 
   slice: (start=0, end=undefined) ->
     # TODO bitsInBB
     # Create a clone.
     r = new TypedReaderNodeBuffer()
     r.littleEndian = @littleEndian
-    r._bitReader = @_bitReader
+    r._defaultBitReader = @_defaultBitReader
     r._state = @_cloneState(@_state)
     for state in @_states
       r._states.push(@_cloneState(state))
@@ -176,6 +189,7 @@ class TypedReaderNodeBuffer extends TypedReader
   skipBytes: (numBytes) ->
     if @_state.availableBytes < numBytes
       throw new RangeError('Cannot skip past end of available bytes.')
+    @_checkBitAlignment()
     @_advancePosition(numBytes)
     return
 
@@ -187,13 +201,25 @@ class TypedReaderNodeBuffer extends TypedReader
 
   availableBits: ->
     # availableBytes is only decremented when 8 bits have been read.
+    # TODO: I think Most16LE should be 16 bits at a time.
     return @_state.availableBytes * 8 - ((8 - @_state.bitsInBB % 8)%8)
 
+  _checkBitAlignment: ->
+    if @_state.bitsInBB
+      if @_state.bitsInBB % 8
+        throw new Error('Unaligned reads currently not supported.')
+      @_state.bitsInBB = 0
+      @_state.bitBuffer = 0
+      @_state.bbRead = 0
+
+  currentBitAlignment: ->
+    return @_state.bitsInBB % 8
+
   readBits: (numBits) ->
-    return @_bitReader(numBits, false)
+    return @_defaultBitReader(numBits, false)
 
   peekBits: (numBits) ->
-    return @_bitReader(numBits, true)
+    return @_defaultBitReader(numBits, true)
 
   _advanceBB: (numBits) ->
     # Clear out the bits we just read.
@@ -207,10 +233,12 @@ class TypedReaderNodeBuffer extends TypedReader
       @_state.bbRead -= numBytes*8
     return
 
-  _bitReaderLeast: (numBits) ->
+  readBitsLeast: (numBits) ->
     throw new Error('Not implemented.')
 
-  _bitReaderMost: (numBits, peek) ->
+  # Reads from most significant bit towards least significant, one byte at a
+  # time.
+  readBitsMost: (numBits, peek) ->
     result = 0
     bitsToRead = numBits
     pushedState = false
@@ -280,7 +308,9 @@ class TypedReaderNodeBuffer extends TypedReader
 
     return result
 
-  _bitReaderMost16Swapped: (numBits, peek) ->
+  # Reads from most significant bit towards least significant, one 16-bit
+  # little-endian integer at a time.
+  readBitsMost16LE: (numBits, peek) ->
     if @_state.bitsInBB >= numBits
       # Fast path.
       keepBits = @_state.bitsInBB-numBits
@@ -321,13 +351,10 @@ class TypedReaderNodeBuffer extends TypedReader
 
     return result
 
-  # TODO: 1-byte binary character?
-  readChar: () ->
-    throw new Error('Not implemented.')
-
   readString: (numBytes, encoding='utf8', trimNull=true, _peek=false) ->
     if numBytes > @_state.availableBytes
       return null
+    @_checkBitAlignment()
 
     if @_state.currentBuffer.length - @_state.currentBufferPos >= numBytes
       # Read entirely from current buffer.
@@ -357,6 +384,7 @@ class TypedReaderNodeBuffer extends TypedReader
   readBuffer: (numBytes, _peek=false) ->
     if numBytes > @_state.availableBytes
       return null
+    @_checkBitAlignment()
 
     if @_state.currentBuffer.length - @_state.currentBufferPos >= numBytes
       # Read entirely from current buffer.
@@ -426,6 +454,7 @@ class TypedReaderNodeBuffer extends TypedReader
     return () ->
       if numBytes > @_state.availableBytes
         return null
+      @_checkBitAlignment()
       if @_state.currentBuffer.length - @_state.currentBufferPos >= numBytes
         # Read directly from current buffer.
         result = bufferFunc.call(@_state.currentBuffer, @_state.currentBufferPos)

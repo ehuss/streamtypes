@@ -99,6 +99,17 @@ describe 'Types', ->
             0x7f, 0xef, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
             0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xef, 0x7f]
   ###########################################################################
+  describe 'Options', ->
+    it 'should honor littleEndian option', ->
+      types =
+        StreamTypeOptions:
+          littleEndian: true
+      r = new TypedReaderNodeBuffer(types)
+      b = new Buffer([0x0A, 0x0B, 0x0C, 0x0D])
+      r.pushBuffer(b)
+      expect(r.read('UInt32')).toEqual(0x0D0C0B0A)
+
+  ###########################################################################
 
   describe 'Bytes type', ->
     it 'should read/write bytes', ->
@@ -298,6 +309,14 @@ describe 'Types', ->
       b = new Buffer('\u0003one\0two\0three\0')
       r.pushBuffer(b)
       expect(r.read('rec')).toEqual({num: 3, items: ['one', 'two', 'three']})
+
+    it 'should fail if can\'t find nul', ->
+      types =
+        str3: ['String0', 3, {failAtMaxBytes: true}]
+      r = new TypedReaderNodeBuffer(types)
+      b = new Buffer('hello')
+      r.pushBuffer(b)
+      expect(->r.read('str3')).toThrow()
 
 
 
@@ -593,3 +612,47 @@ describe 'Types', ->
           field2: undefined
           field3: 3)
       ), [1, 0, 3]
+
+  ###########################################################################
+
+  describe 'Flags type', ->
+    it 'should read/write flags', ->
+      types =
+        flags: ['Flags', 'UInt8',
+           'flag1',
+           'flag2',
+           'flag3',
+           'flag4'
+        ]
+      r = new TypedReaderNodeBuffer(types)
+      b = new Buffer([0b1010])
+      r.pushBuffer(b)
+      expect(r.read('flags')).toEqual({flag1: false, flag2: true, flag3: false, flag4: true, originalData:0b1010})
+
+      flushedExpectation [types], ((w) ->
+        w.write('flags', {flag1: false, flag2: true, flag3: false, flag4: true})
+      ), [0b1010]
+
+      flushedExpectation [types], ((w) ->
+        w.write('flags', 0b1010)
+      ), [0b1010]
+
+  ###########################################################################
+
+  describe 'If type', ->
+    it 'should read/write conditionally', ->
+      types =
+        rec: ['Record',
+          'flag', 'UInt8',
+          'extra', ['If', ((reader, context) -> context.flag), ['Const', 'UInt8', 42]]
+        ]
+      r = new TypedReaderNodeBuffer(types)
+      b = new Buffer([0, 1, 42])
+      r.pushBuffer(b)
+      expect(r.read('rec')).toEqual({flag: 0, extra: undefined})
+      expect(r.read('rec')).toEqual({flag: 1, extra: 42})
+
+      flushedExpectation [types], ((w) ->
+        w.write('rec', {flag: 0})
+        w.write('rec', {flag: 1})
+      ), [0, 1, 42]
