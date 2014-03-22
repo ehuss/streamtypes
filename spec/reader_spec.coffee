@@ -3,7 +3,7 @@ TypedReaderNodeBuffer = streamtypes.TypedReaderNodeBuffer
 
 # TODO
 # - partition more methods.
-# - bitreader option
+# - bitreader option (least, most16le)
 
 partition = (seq) ->
   if not seq.length
@@ -18,15 +18,19 @@ partition = (seq) ->
         results.push(perm)
     return results
 
-bufferPartition = (bytes, f) ->
+bufferPartition = (bytes, f, typeDecls = {}, options = {}) ->
   parts = partition(bytes)
   for part in parts
-    r = new TypedReaderNodeBuffer()
+    r = new TypedReaderNodeBuffer(typeDecls, options)
     for segment in part
       b = new Buffer(segment)
       r.pushBuffer(b)
     f(r)
   return
+
+mostLeast = (mostBytes, leastBytes, f) ->
+  bufferPartition(mostBytes, f)
+  bufferPartition(leastBytes, f, {}, {bitStyle: 'least'})
 
 describe 'TypedReaderNodeBuffer', ->
   describe 'Basic reads', ->
@@ -117,43 +121,60 @@ describe 'TypedReaderNodeBuffer', ->
       r.pushBuffer(b)
       expect(r.readUInt32()).toBe(0x0A0B0C0D)
 
+  ############################################################################
 
   describe 'Bit reader', ->
     it 'should read bits', ->
-      r = new TypedReaderNodeBuffer()
-      b = new Buffer([0b10110001])
-      r.pushBuffer(b)
-      expect(r.readBits(3)).toBe(5)
-      expect(r.readBits(6)).toBeNull()
-      expect(r.readBits(5)).toBe(17)
-      expect(r.readBits(1)).toBeNull()
+      mostLeast [0b10110001], [0b10001101],  (r) ->
+        expect(r.readBits(3)).toBe(0b101)
+        expect(r.readBits(6)).toBeNull()
+        expect(r.readBits(5)).toBe(0b10001)
+        expect(r.readBits(1)).toBeNull()
 
     it 'should advance 8 bits at a time', ->
-      r = new TypedReaderNodeBuffer()
-      b = new Buffer([0b10011101, 0b00100001, 0b01010101])
-      r.pushBuffer(b)
-      expect(r.peekUInt8()).toBe(0b10011101)
-      expect(r.readBits(3)).toBe(0b100)
-      expect(->r.peekUInt8()).toThrow()
-      expect(r.readBits(4)).toBe(0b1110)
-      expect(->r.peekUInt8()).toThrow()
-      expect(r.readBits(1)).toBe(0b1)
-      expect(r.peekUInt8()).toBe(0b00100001)
-      expect(r.readBits(1)).toBe(0b0)
-      expect(->r.peekUInt8()).toThrow()
-      expect(r.readBits(8)).toBe(0b01000010)
-      expect(->r.peekUInt8()).toThrow()
-      expect(r.readBits(8)).toBeNull()
-      expect(r.readBits(7)).toBe(0b1010101)
-      expect(r.peekUInt8()).toBeNull()
-      expect(r.readBits(1)).toBeNull()
+      bufferPartition [0b10011101, 0b00100001, 0b01010101], (r) ->
+        expect(r.peekUInt8()).toBe(0b10011101)
+        expect(r.readBits(3)).toBe(0b100)
+        expect(r.peekUInt8()).toBe(0b00100001)
+        expect(r.readBits(4)).toBe(0b1110)
+        expect(r.peekUInt8()).toBe(0b00100001)
+        expect(r.readBits(1)).toBe(0b1)
+        expect(r.peekUInt8()).toBe(0b00100001)
+        expect(r.readBits(1)).toBe(0b0)
+        expect(r.peekUInt8()).toBe(0b01010101)
+        expect(r.readBits(8)).toBe(0b01000010)
+        expect(r.peekUInt8()).toBeNull()
+        expect(r.readBits(8)).toBeNull()
+        expect(r.readBits(7)).toBe(0b1010101)
+        expect(r.peekUInt8()).toBeNull()
+        expect(r.readBits(1)).toBeNull()
+
+      bufferPartition [0b11110100, 0b10000100, 0b10101010], ((r) ->
+        expect(r.peekUInt8()).toBe(0b11110100)
+        expect(r.readBits(3)).toBe(0b100)
+        expect(r.peekUInt8()).toBe(0b10000100)
+        expect(r.readBits(4)).toBe(0b1110)
+        expect(r.peekUInt8()).toBe(0b10000100)
+        expect(r.readBits(1)).toBe(0b1)
+        expect(r.peekUInt8()).toBe(0b10000100)
+        expect(r.readBits(1)).toBe(0b0)
+        expect(r.peekUInt8()).toBe(0b10101010)
+        expect(r.readBits(8)).toBe(0b01000010)
+        expect(r.peekUInt8()).toBeNull()
+        expect(r.readBits(8)).toBeNull()
+        expect(r.readBits(7)).toBe(0b1010101)
+        expect(r.peekUInt8()).toBeNull()
+        expect(r.readBits(1)).toBeNull()
+      ), {}, {bitStyle: 'least'}
 
     it 'should handle unsigned 32-bits', ->
-      bufferPartition [0b11111111, 0b11111111, 0b11111111, 0b11111111], (r) ->
+      mostLeast [0b11111111, 0b11111111, 0b11111111, 0b11111111],
+      [0b11111111, 0b11111111, 0b11111111, 0b11111111], (r) ->
         expect(r.peekBits(32)).toBe(0xffffffff)
         expect(r.peekBits(1)).toBe(1)
 
-      bufferPartition [0, 0, 0, 1, 0xff, 0xff, 0xff, 0xff], (r) ->
+      mostLeast [0, 0, 0, 1, 0xff, 0xff, 0xff, 0xff],
+      [0, 0, 0, 0b10000000, 0xff, 0xff, 0xff, 0xff], (r) ->
         expect(r.readBits(31)).toBe(0)
         expect(r.peekBits(32)).toBe(0b11111111111111111111111111111111)
         expect(r.peekBits(1)).toBe(1)
@@ -164,11 +185,23 @@ describe 'TypedReaderNodeBuffer', ->
         expect(r.readBits(32)).toBe(0b11111111100000001010101001010101)
         expect(r.readBits(1)).toBeNull()
 
+      bufferPartition [0b11111111, 0b10000000, 0b10101010, 0b01010101], ((r) ->
+        expect(r.peekBits(8)).toBe(0b11111111)
+        expect(r.readBits(32)).toBe(0b01010101101010101000000011111111)
+        expect(r.readBits(1)).toBeNull()
+      ), {}, {bitStyle: 'least'}
+
     it 'most should read 3 bytes at a time', ->
       bufferPartition [0b11111111, 0b10000000, 0b10101010], (r) ->
         expect(r.peekBits(8)).toBe(0b11111111)
         expect(r.readBits(24)).toBe(0b111111111000000010101010)
         expect(r.readBits(1)).toBeNull()
+
+      bufferPartition [0b11111111, 0b10000000, 0b10101010], ((r) ->
+        expect(r.peekBits(8)).toBe(0b11111111)
+        expect(r.readBits(24)).toBe(0b101010101000000011111111)
+        expect(r.readBits(1)).toBeNull()
+      ), {}, {bitStyle: 'least'}
 
     it 'most should read 2 bytes at a time', ->
       bufferPartition [0b11111111, 0b10000000], (r) ->
@@ -176,22 +209,53 @@ describe 'TypedReaderNodeBuffer', ->
         expect(r.readBits(16)).toBe(0b1111111110000000)
         expect(r.readBits(1)).toBeNull()
 
+      bufferPartition [0b11111111, 0b10000000], ((r) ->
+        expect(r.peekBits(8)).toBe(0b11111111)
+        expect(r.readBits(16)).toBe(0b1000000011111111)
+        expect(r.readBits(1)).toBeNull()
+      ), {}, {bitStyle: 'least'}
+
     it 'most should read 1 bytes at a time', ->
-      bufferPartition [0b10101010], (r) ->
+      mostLeast [0b10101010], [0b10101010], (r) ->
         expect(r.peekBits(8)).toBe(0b10101010)
         expect(r.readBits(8)).toBe(0b10101010)
         expect(r.readBits(1)).toBeNull()
 
     it 'should handle intermixed bits and byte reads', ->
-      bufferPartition [0b11001010, 0b10100101, 0b10101010], (r) ->
+      bufferPartition [0b11001010, 0b10100101, 0b00101010], (r) ->
+        expect(r.currentBitAlignment()).toBe(0)
         expect(r.readBits(1)).toBe(1)
-        expect(->r.readUInt8()).toThrow()
-        expect(r.readBits(7)).toBe(0b1001010)
+        expect(r.currentBitAlignment()).toBe(7)
         expect(r.readUInt8()).toBe(0b10100101)
-        expect(r.readBits(8)).toBe(0b10101010)
+        expect(r.currentBitAlignment()).toBe(7)
+        expect(r.readBits(8)).toBe(0b10010100)
+        expect(r.currentBitAlignment()).toBe(7)
+        expect(r.readUInt8()).toBeNull()
+        expect(r.readBits(7)).toBe(0b0101010)
+        expect(r.currentBitAlignment()).toBe(0)
+        expect(r.readBits(1)).toBeNull()
         expect(r.availableBytes()).toBe(0)
         expect(r.availableBits()).toBe(0)
         expect(r.currentBitAlignment()).toBe(0)
+
+      bufferPartition [0b11001010, 0b10100101, 0b00101010], ((r) ->
+        expect(r.currentBitAlignment()).toBe(0)
+        expect(r.readBits(1)).toBe(0)
+        expect(r.currentBitAlignment()).toBe(7)
+        expect(r.readUInt8()).toBe(0b10100101)
+        expect(r.currentBitAlignment()).toBe(7)
+        expect(r.readBits(8)).toBe(0b01100101)
+        expect(r.currentBitAlignment()).toBe(7)
+        expect(r.readUInt8()).toBeNull()
+        expect(r.readBits(7)).toBe(0b0010101)
+        expect(r.currentBitAlignment()).toBe(0)
+        expect(r.readBits(1)).toBeNull()
+        expect(r.availableBytes()).toBe(0)
+        expect(r.availableBits()).toBe(0)
+        expect(r.currentBitAlignment()).toBe(0)
+      ), {}, {bitStyle: 'least'}
+
+  ############################################################################
 
   describe 'currentBitAlignment', ->
     it 'should return number of bits to read to achieve alignment', ->

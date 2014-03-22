@@ -15,70 +15,6 @@
 types = require('./types')
 EventEmitter = require('events').EventEmitter
 
-class BitWriter
-  constructor: (@writer) ->
-  writeBits: (value, numBits) ->
-    throw new Error('Not implemented.')
-  flush: ->
-    throw new Error('Not implemented.')
-
-class BitWriterMost
-  constructor: (@writer) ->
-    @_bitsInBB = 0
-    @_bitBuffer = 0
-
-  writeBits: (value, numBits) ->
-    if numBits > 32
-      throw new RangeError('Cannot write more than 32 bits.')
-    while numBits
-      # Fill up to 8 bits in the bit buffer.
-      num = Math.min(numBits, 8-@_bitsInBB)
-      numBits -= num
-      @_bitBuffer = (@_bitBuffer << num) | (value >>> numBits)
-      # Clear bits written
-      value = value & ~(((1<<num)-1)<<numBits)
-      @_bitsInBB += num
-      if @_bitsInBB == 8
-        @writer.writeUInt8(@_bitBuffer)
-        @_bitBuffer = 0
-        @_bitsInBB = 0
-    return
-
-  flush: ->
-    if @_bitsInBB
-      @writeBits(0, (8-@_bitsInBB))
-    return
-
-# TODO
-# class BitWriterMost
-
-class BitWriterMost16LE
-  constructor: (@writer) ->
-    @_bitsInBB = 0
-    @_bitBuffer = 0
-
-  writeBits: (value, numBits) ->
-    if numBits > 32
-      throw new RangeError('Cannot write more than 32 bits.')
-    while numBits
-      # Fill up to 16 bits in the bit buffer.
-      num = Math.min(numBits, 16-@_bitsInBB)
-      numBits -= num
-      @_bitBuffer = (@_bitBuffer << num) | (value >>> numBits)
-      # Clear bits written
-      value = value & ~(((1<<num)-1)<<numBits)
-      @_bitsInBB += num
-      if @_bitsInBB == 16
-        @writer.writeUInt16LE(@_bitBuffer)
-        @_bitBuffer = 0
-        @_bitsInBB = 0
-    return
-
-  flush: ->
-    if @_bitsInBB
-      @writeBits(0, (16-@_bitsInBB))
-    return
-
 class TypedWriter extends EventEmitter
 
 
@@ -86,14 +22,26 @@ class TypedWriterNodeBuffer extends TypedWriter
   constructor: (@typeDecls = {}, options = {}) ->
     @littleEndian = options.littleEndian ? @typeDecls.StreamTypeOptions?.littleEndian ? false
     @bufferSize = Math.max(options.bufferSize ? 32768, 8)
+    bitStyle = options.bitStyle ? @typeDecls.StreamTypeOptions?.bitStyle ? 'most'
+    switch bitStyle
+      when 'most'
+        @writeBits = @writeBitsMost
+        @flushBits = @flushBits8
+      when 'least'
+        @writeBits = @writeBitsLeast
+        @flushBits = @flushBits8
+      when 'most16le'
+        @writeBits = @writeBitsMost16LE
+        @flushBits = @flushBits16LE
+      else
+        throw new Error("Unknown bit style #{bitStyle}")
     # TODO:
     # - Comment on what the invariants are (buffer==null then pos==0,  buffer!=null, then availableBytes > 0, etc.)
-    bitWriterConst = options.bitWriter ? BitWriterMost
-    @_bitWriter = new bitWriterConst(this)
-    @writeBits = @_bitWriter.writeBits.bind(@_bitWriter)
     @_currentBuffer = null
     @_currentBufferPos = 0
     @_availableBytes = 0
+    @_bitBuffer = 0
+    @_bitsInBB = 0
     @_bytesWritten = 0
     @_types = new types.Types(@typeDecls)
 
@@ -101,7 +49,6 @@ class TypedWriterNodeBuffer extends TypedWriter
     return @_bytesWritten
 
   flush: ->
-    @_bitWriter.flush()
     if @_currentBuffer
       part = @_currentBuffer.slice(0, @_currentBufferPos)
       @emit('data', part)
@@ -148,6 +95,10 @@ class TypedWriterNodeBuffer extends TypedWriter
     buffer = new Buffer(array)
     @writeBuffer(buffer)
     return
+
+  ###########################################################################
+  # Basic types.
+  ###########################################################################
 
   _makeBufferWrite = (numBytes, bufferFunc) ->
     return (value) ->
@@ -197,9 +148,82 @@ class TypedWriterNodeBuffer extends TypedWriter
   writeInt64BE: () ->
   writeUInt64BE: () ->
 
+  ###########################################################################
+  # Bit methods.
+  ###########################################################################
 
+  writeBits: (numBits) ->
+    # Placeholder, assigned in constructor.
 
+  flushBits: ->
+    # Placeholder, assigned in constructor.
+
+  writeBitsMost: (value, numBits) ->
+    if numBits > 32
+      throw new RangeError('Cannot write more than 32 bits.')
+    while numBits
+      # Fill up to 8 bits in the bit buffer.
+      num = Math.min(numBits, 8-@_bitsInBB)
+      numBits -= num
+      @_bitBuffer = (@_bitBuffer << num) | (value >>> numBits)
+      # Clear bits written
+      value = value & ~(((1<<num)-1)<<numBits)
+      @_bitsInBB += num
+      if @_bitsInBB == 8
+        @writeUInt8(@_bitBuffer)
+        @_bitBuffer = 0
+        @_bitsInBB = 0
+    return
+
+  flushBits8: ->
+    if @_bitsInBB
+      @writeBits(0, (8-@_bitsInBB))
+    return
+
+  writeBitsLeast: (value, numBits) ->
+    if numBits > 32
+      throw new RangeError('Cannot write more than 32 bits.')
+    while numBits
+      # Fill up to 8 bits in the bit buffer.
+      num = Math.min(numBits, 8-@_bitsInBB)
+      numBits -= num
+      # The lower `num` bits of the value we want to write.
+      valuePart = value & ((1<<num)-1)
+      @_bitBuffer |= valuePart << @_bitsInBB
+      # Clear bits written
+      value >>= num
+      @_bitsInBB += num
+      if @_bitsInBB == 8
+        @writeUInt8(@_bitBuffer)
+        @_bitBuffer = 0
+        @_bitsInBB = 0
+    return
+
+  writeBitsMost16LE: (value, numBits) ->
+    if numBits > 32
+      throw new RangeError('Cannot write more than 32 bits.')
+    while numBits
+      # Fill up to 16 bits in the bit buffer.
+      num = Math.min(numBits, 16-@_bitsInBB)
+      numBits -= num
+      @_bitBuffer = (@_bitBuffer << num) | (value >>> numBits)
+      # Clear bits written
+      value = value & ~(((1<<num)-1)<<numBits)
+      @_bitsInBB += num
+      if @_bitsInBB == 16
+        @writeUInt16LE(@_bitBuffer)
+        @_bitBuffer = 0
+        @_bitsInBB = 0
+    return
+
+  flushBits16LE: ->
+    if @_bitsInBB
+      @writeBits(0, (16-@_bitsInBB))
+    return
+
+  ###########################################################################
   # Type methods.
+  ###########################################################################
 
   write: (typeName, value) ->
     type = @_types.typeMap[typeName]
@@ -209,5 +233,3 @@ class TypedWriterNodeBuffer extends TypedWriter
 
 
 exports.TypedWriterNodeBuffer = TypedWriterNodeBuffer
-exports.BitWriterMost = BitWriterMost
-exports.BitWriterMost16LE = BitWriterMost16LE

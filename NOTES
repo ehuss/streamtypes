@@ -17,11 +17,7 @@ jasmine-node --captureExceptions --watch src --autotest --coffee spec
 
 Compression
 ===========
-https://github.com/madler/zlib/
-http://www.zlib.net/manual.html
-http://www.zlib.net/zlib_how.html
 https://code.google.com/p/bitjs/source/browse/unzip.js
-http://tools.ietf.org/html/rfc1951 - DEFLATE
 https://code.google.com/p/bitjs/source/browse/io.js
 http://www.gzip.org/algorithm.txt
 ftp://140.118.175.164/efficient%20huffman%20decoding.pdf

@@ -82,26 +82,26 @@ describe 'TypedWriterNodeBuffer', ->
         ), [0b10111100, 0]
 
     it 'should write 16-bit LE bytes', ->
-      flushedExpectation [{}, {bitWriter:streamtypes.BitWriterMost16LE}], ((w) ->
+      flushedExpectation [{}, {bitStyle: 'most16le'}], ((w) ->
         w.writeBits(1, 1)
         ), [0, 0x80]
-      flushedExpectation [{}, {bitWriter:streamtypes.BitWriterMost16LE}], ((w) ->
+      flushedExpectation [{}, {bitStyle: 'most16le'}], ((w) ->
         w.writeBits(0b10101010, 8)
         ), [0, 0b10101010]
-      flushedExpectation [{}, {bitWriter:streamtypes.BitWriterMost16LE}], ((w) ->
+      flushedExpectation [{}, {bitStyle: 'most16le'}], ((w) ->
         w.writeBits(0b1010101011111111, 16)
         ), [0b11111111, 0b10101010]
-      flushedExpectation [{}, {bitWriter:streamtypes.BitWriterMost16LE}], ((w) ->
+      flushedExpectation [{}, {bitStyle: 'most16le'}], ((w) ->
         w.writeBits(0b10101010111111110101010100000000, 32)
         ), [0b11111111, 0b10101010, 0, 0b01010101]
-      flushedExpectation [{}, {bitWriter:streamtypes.BitWriterMost16LE}], ((w) ->
+      flushedExpectation [{}, {bitStyle: 'most16le'}], ((w) ->
         w.writeBits(0xFFFFFFFF, 32)
         ), [0xFF, 0xFF, 0xFF, 0xFF]
-      flushedExpectation [{}, {bitWriter:streamtypes.BitWriterMost16LE}], ((w) ->
+      flushedExpectation [{}, {bitStyle: 'most16le'}], ((w) ->
         w.writeBits(1, 1)
         w.writeBits(0, 1)
         ), [0, 0b10000000]
-      flushedExpectation [{}, {bitWriter:streamtypes.BitWriterMost16LE}], ((w) ->
+      flushedExpectation [{}, {bitStyle: 'most16le'}], ((w) ->
         w.writeBits(1, 1)
         w.writeBits(0, 1)
         w.writeBits(0b11110000, 8)

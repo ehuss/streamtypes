@@ -21,19 +21,24 @@ class TypedReaderNodeBuffer extends TypedReader
 
   constructor: (@typeDecls = {}, options = {}) ->
     @littleEndian = options.littleEndian ? @typeDecls.StreamTypeOptions?.littleEndian ? false
-    switch options.bitReader ? @typeDecls.StreamTypeOptions?.bitReader
+    bitStyle = options.bitStyle ? @typeDecls.StreamTypeOptions?.bitStyle ? 'most'
+    switch bitStyle
+      when 'most'
+        @readBits = @readBitsMost
+        @peekBits = @peekBitsMost
       when 'least'
-        @_defaultBitReader = this.readBitsLeast
+        @readBits = @readBitsLeast
+        @peekBits = @peekBitsLeast
       when 'most16le'
-        @_defaultBitReader = this.readBitsMost16LE
+        @readBits = @readBitsMost16LE
+        @peekBits = @peekBitsMost16LE
       else
-        @_defaultBitReader = this.readBitsMost
+        throw new Error("Unknown bit style #{bitStyle}")
     # TODO: Moving the current state to be properties of the reader, is that
     # noticeably more efficient?
     @_state =
       bitBuffer: 0
       bitsInBB: 0
-      bbRead: 0
       availableBytes: 0
       buffers: []
       currentBuffer: null
@@ -121,6 +126,14 @@ class TypedReaderNodeBuffer extends TypedReader
     addBuf(@_state, buffer)
     return
 
+# unreadBuffer: (buffer) ->
+#   if @_state.currentBuffer
+#     cBuf = @_state.currentBuffer[currentBufferPos...]
+#     @_state.buffers.unshift(cBuf)
+#   @_state.currentBuffer = buffer
+#   @_state.availableBytes += buffer.length
+#   return
+
   _cloneState: (state) ->
     clone = {}
     for key, value of state
@@ -189,7 +202,6 @@ class TypedReaderNodeBuffer extends TypedReader
   skipBytes: (numBytes) ->
     if @_state.availableBytes < numBytes
       throw new RangeError('Cannot skip past end of available bytes.')
-    @_checkBitAlignment()
     @_advancePosition(numBytes)
     return
 
@@ -199,162 +211,300 @@ class TypedReaderNodeBuffer extends TypedReader
   availableBytes: ->
     return @_state.availableBytes
 
+  ###########################################################################
+  # Bit reading methods.
+  ###########################################################################
+
+  # TODO: Factor out common code.
+
+  readBits: (numBits) ->
+    # Placeholder, assigned in constructor.
+
+  peekBits: (numBits) ->
+    # Placeholder, assigned in constructor.
+
   availableBits: ->
     # availableBytes is only decremented when 8 bits have been read.
     # TODO: I think Most16LE should be 16 bits at a time.
-    return @_state.availableBytes * 8 - ((8 - @_state.bitsInBB % 8)%8)
-
-  _checkBitAlignment: ->
-    if @_state.bitsInBB
-      if @_state.bitsInBB % 8
-        throw new Error('Unaligned reads currently not supported.')
-      @_state.bitsInBB = 0
-      @_state.bitBuffer = 0
-      @_state.bbRead = 0
+    return @_state.availableBytes * 8 + @_state.bitsInBB
 
   currentBitAlignment: ->
-    return @_state.bitsInBB % 8
+    return @_state.bitsInBB
 
-  readBits: (numBits) ->
-    return @_defaultBitReader(numBits, false)
-
-  peekBits: (numBits) ->
-    return @_defaultBitReader(numBits, true)
-
-  _advanceBB: (numBits) ->
-    # Clear out the bits we just read.
-    keepBits = @_state.bitsInBB-numBits
-    @_state.bitBuffer &= ~(((1<<numBits)-1) << keepBits)
-    @_state.bitsInBB -= numBits
-    @_state.bbRead += numBits
-    numBytes = Math.floor(@_state.bbRead / 8)
-    if numBytes
-      @_advancePosition(numBytes)
-      @_state.bbRead -= numBytes*8
-    return
-
-  readBitsLeast: (numBits) ->
-    throw new Error('Not implemented.')
+  clearBitBuffer: ->
+    @_state.bitBuffer = 0
+    @_state.bitsInBB = 0
 
   # Reads from most significant bit towards least significant, one byte at a
   # time.
-  readBitsMost: (numBits, peek) ->
-    result = 0
-    bitsToRead = numBits
-    pushedState = false
+  readBitsMost: (numBits) ->
+    if @availableBits() < numBits
+      return null
+    if numBits > 32
+      throw new Error("Cannot read more than 32 bits (tried #{numBits}).")
+    # Is there enough data in the BB?
+    needBits = numBits - @_state.bitsInBB
+    if needBits > 0
+      needBytes = Math.ceil(needBits / 8)
+      switch needBytes
+        when 4
+          newBits = @readUInt32BE()
+          keepBits = 32 - needBits
+        when 3
+          newBits = (@readUInt8() << 16) | (@readUInt8() << 8) | @readUInt8()
+          keepBits = 24 - needBits
+        when 2
+          newBits = @readUInt16BE()
+          keepBits = 16 - needBits
+        when 1
+          newBits = @readUInt8()
+          keepBits = 8 - needBits
 
-    if @_state.bitsInBB < numBits
-      if numBits > 32
-        throw new RangeError('This reader cannot handle more than 32 bits.')
-      # Not enough bits in bb.
-      # Read what's available.
+      result = ((@_state.bitBuffer << needBits) | (newBits >>> keepBits)) >>> 0
+      # Put whatever is left over into the bit buffer.
+      mask = (1 << keepBits)-1
+      @_state.bitBuffer = newBits & mask
+      @_state.bitsInBB = keepBits
+      return result
+    else
+      # Read entirely from bb.
+      keepBits = @_state.bitsInBB - numBits
+      result = @_state.bitBuffer >>> keepBits
+      # Remove these bits from the buffer.
+      # numBits should never be 32, so we don't need to worry about overflow.
+      @_state.bitBuffer &= ~(((1<<numBits >>> 0)-1) << keepBits)
+      @_state.bitsInBB = keepBits
+      return result
 
-      # How many bytes do we need to read (after exhausting current bit
-      # buffer).
-      numBytes = Math.ceil((bitsToRead-@_state.bitsInBB)/8)
-      # How many bytes would be available if we exhausted the current bit
-      # buffer.
-      exhaust = Math.floor((@_state.bbRead + @_state.bitsInBB) / 8)
-      if numBytes > (@_state.availableBytes - exhaust)
-        return null
+  peekBitsMost: (numBits) ->
+    if @availableBits() < numBits
+      return null
+    if numBits > 32
+      throw new Error("Cannot read more than 32 bits (tried #{numBits}).")
+    # Is there enough data in the BB?
+    needBits = numBits - @_state.bitsInBB
+    if needBits > 0
+      needBytes = Math.ceil(needBits / 8)
+      switch needBytes
+        when 4
+          newBits = @peekUInt32BE()
+          keepBits = 32 - needBits
+        when 3
+          if @_state.currentBuffer.length - @_state.currentBufferPos >= 3
+            # Read directly from current buffer.
+            buffer = @_state.currentBuffer
+            pos = @_state.currentBufferPos
+          else
+            # Need to read across buffers.
+            buffer = @peekBuffer(3)
+            pos = 0
+          newBits = (buffer.readUInt8() << 16) |
+                    (buffer.readUInt8() << 8) |
+                     buffer.readUInt8()
+          keepBits = 24 - needBits
+        when 2
+          newBits = @peekUInt16BE()
+          keepBits = 16 - needBits
+        when 1
+          newBits = @peekUInt8()
+          keepBits = 8 - needBits
 
-      if peek
-        # We must do this because _advanceBB makes things complicated.
-        # Candidate for optimization (for the fast path where we load bits
-        # directly from currentBuffer).
-        pushedState = true
-        @saveState()
+      return ((@_state.bitBuffer << needBits) | (newBits >>> keepBits)) >>> 0
+    else
+      # Read entirely from bb.
+      keepBits = @_state.bitsInBB - numBits
+      return @_state.bitBuffer >>> keepBits
 
-      bitsToRead -= @_state.bitsInBB
-      # Make room for the result of the result to be read below.
-      result = (@_state.bitBuffer << bitsToRead) >>> 0
-      @_advanceBB(@_state.bitsInBB)
+  # Remove this?
+  loadBitsLeast: (numBits) ->
+    if @availableBits() < numBits
+      return null
+    # Limit is due to 32-bit bit buffer size.  If you ask for 26 bits, and
+    # there is 1 bit in the buffer, you must read 4 bytes which would overflow
+    # (32+1).  Could in theory make the limit 25, but this is simpler.
+    if numBits > 24
+      throw new Error("Cannot read more than 24 bits (tried #{numBits}).")
+    # Is there enough data in the BB?
+    needBits = numBits - @_state.bitsInBB
+    if needBits > 0
+      needBytes = Math.ceil((numBits - @_state.bitsInBB) / 8)
+      switch needBytes
+        when 3
+          @_state.bitBuffer = (@readUInt8() | (@readUInt8() << 8) | (@readUInt8() << 16)) >>> 0
+          @_state.bitsInBB = 24
+        when 2
+          newBits = @readUInt16LE()
+          @_state.bitBuffer = (@_state.bitBuffer | newBits << @_state.bitsInBB) >>> 0
+          @_state.bitsInBB += 16
+        when 1
+          newBits = @readUInt8()
+          @_state.bitBuffer = (@_state.bitBuffer | newBits << @_state.bitsInBB) >>> 0
+          @_state.bitsInBB += 8
 
-      # Fill the bit buffer.
-      if @_state.availableBytes >= 4
-        @_state.bitBuffer = @peekUInt32BE()
-        @_state.bitsInBB = 32
-      else if @_state.availableBytes == 3
-        if @_state.currentBuffer.length - @_state.currentBufferPos >= 3
-          # Read directly from current buffer.
-          buffer = @_state.currentBuffer
-          pos = @_state.currentBufferPos
-        else
-          # Need to read across buffers.
-          buffer = @peekBuffer(3)
-          pos = 0
-        @_state.bitBuffer = buffer.readUInt8(pos) << 16 |
-                            buffer.readUInt8(pos+1) << 8 |
-                            buffer.readUInt8(pos+2)
-        @_state.bitsInBB = 24
-      else if @_state.availableBytes == 2
-        @_state.bitBuffer = @peekUInt16BE()
-        @_state.bitsInBB = 16
-      else if @_state.availableBytes == 1
-        @_state.bitBuffer = @peekUInt8()
-        @_state.bitsInBB = 8
+    # Read from bb.
+    # numBits should never be 32, so we don't need to worry about overflow.
+    return @_state.bitBuffer & ((1<<numBits)-1)
+
+  # unreadBitsLeast: (value, numBits) ->
+  #   if @_state.bitsInBB + numBits > 24
+  #     throw new Error("Too many bits.")
+  #   @_state.bitBuffer = ((@_state.bitBuffer << numBits) | value) >>> 0
+  #   @_state.bitsInBB += numBits
+  #   return
+
+  # consumeBitsLeast: (numBits) ->
+  #   if numBits > @_state.bitsInBB
+  #     throw new Error("Can't consume #{numBits}, only #{@_state.bitsInBB} available.")
+  #   @_state.bitBuffer = @_state.bitBuffer >>> numBits
+  #   @_state.bitsInBB -= numBits
+  #   return
+
+  readBitsLeast: (numBits) ->
+    if @availableBits() < numBits
+      return null
+    if numBits > 32
+      throw new Error("Cannot read more than 32 bits (tried #{numBits}).")
+    # Is there enough data in the BB?
+    needBits = numBits - @_state.bitsInBB
+    if needBits > 0
+      needBytes = Math.ceil((numBits - @_state.bitsInBB) / 8)
+      switch needBytes
+        when 4
+          # This special case avoids issues with trying to create masks.
+          newBits = @readUInt32LE()
+          keepBits = 32 - needBits
+        when 3
+          newBits = @readUInt8() | (@readUInt8() << 8) | (@readUInt8() << 16)
+          keepBits = 24 - needBits
+        when 2
+          newBits = @readUInt16LE()
+          keepBits = 16 - needBits
+        when 1
+          newBits = @readUInt8()
+          keepBits = 8 - needBits
+
+      if needBits == 32
+        # This deals with 32-bit overflow.
+        newBitsToUse = newBits
       else
-        throw new Error("Internal error, availableBytes==0")
+        newBitsToUse = newBits & ((1<<needBits)-1)
+      result = (@_state.bitBuffer | (newBitsToUse << @_state.bitsInBB)) >>> 0
+      # Put whatever is left into the bit buffer.
+      @_state.bitBuffer = newBits >>> needBits
+      @_state.bitsInBB = keepBits
+      return result
+    else
+      # Read entirely from bb.
+      # numBits should never be 32, so we don't need to worry about overflow.
+      result = @_state.bitBuffer & ((1<<numBits)-1)
+      # Remove these bits from the buffer.
+      @_state.bitBuffer = @_state.bitBuffer >>> numBits
+      @_state.bitsInBB -= numBits
+      return result
 
-    # Read numBits of the left (MSB) bits.
-    keepBits = @_state.bitsInBB-bitsToRead
-    result = (result | (@_state.bitBuffer >>> keepBits)) >>> 0
+  peekBitsLeast: (numBits) ->
+    if @availableBits() < numBits
+      return null
+    if numBits > 32
+      throw new Error("Cannot read more than 32 bits (tried #{numBits}).")
+    # Is there enough data in the BB?
+    needBits = numBits - @_state.bitsInBB
+    if needBits > 0
+      needBytes = Math.ceil(needBits / 8)
+      switch needBytes
+        when 4
+          newBits = @peekUInt32LE()
+          keepBits = 32 - needBits
+        when 3
+          if @_state.currentBuffer.length - @_state.currentBufferPos >= 3
+            # Read directly from current buffer.
+            buffer = @_state.currentBuffer
+            pos = @_state.currentBufferPos
+          else
+            # Need to read across buffers.
+            buffer = @peekBuffer(3)
+            pos = 0
+          newBits = buffer.readUInt8(pos) | (buffer.readUInt8(pos+1) << 8) | (buffer.readUInt8(pos+2) << 16)
+          keepBits = 24 - needBits
+        when 2
+          newBits = @peekUInt16LE()
+          keepBits = 16 - needBits
+        when 1
+          newBits = @peekUInt8()
+          keepBits = 8 - needBits
 
-    if not peek
-      # Clear out the bits we just read.
-      @_advanceBB(bitsToRead)
-    else if pushedState
-      @restoreState()
-
-    return result
+      if needBits == 32
+        # This deals with 32-bit overflow.
+        newBitsToUse = newBits
+      else
+        newBitsToUse = newBits & ((1<<needBits)-1)
+      return (@_state.bitBuffer | (newBitsToUse << @_state.bitsInBB)) >>> 0
+    else
+      # Read entirely from bb.
+      # numBits should never be 32, so we don't need to worry about overflow.
+      return @_state.bitBuffer & ((1<<numBits)-1)
 
   # Reads from most significant bit towards least significant, one 16-bit
   # little-endian integer at a time.
-  readBitsMost16LE: (numBits, peek) ->
-    if @_state.bitsInBB >= numBits
-      # Fast path.
-      keepBits = @_state.bitsInBB-numBits
+  readBitsMost16LE: (numBits) ->
+    if @availableBits() < numBits
+      return null
+    if numBits > 32
+      throw new Error("Cannot read more than 32 bits (tried #{numBits}).")
+    needBits = numBits - @_state.bitsInBB
+    if needBits > 0
+      needBytes = Math.ceil(needBits / 8)
+      if needBytes > 2
+        newBits = ((@readUInt16LE() << 16) | @readUInt16LE()) >>> 0
+        keepBits = 32 - needBits
+      else if needBytes > 0
+        newBits = @readUInt16LE()
+        keepBits = 16 - needBits
+
+      result = ((@_state.bitBuffer << needBits) | (newBits >>> keepBits)) >>> 0
+      # Put whatever is left over into the bit buffer.
+      mask = (1 << keepBits)-1
+      @_state.bitBuffer = newBits & mask
+      @_state.bitsInBB = keepBits
+      return result
+    else
+      # Read entirely from bb.
+      keepBits = @_state.bitsInBB - numBits
       result = @_state.bitBuffer >>> keepBits
-      if not peek
-        # Clear out the bits we just read.
-        @_advanceBB(numBits)
+      # Remove these bits from the buffer.
+      # numBits should never be 32, so we don't need to worry about overflow.
+      @_state.bitBuffer &= ~(((1<<numBits >>> 0)-1) << keepBits)
+      @_state.bitsInBB = keepBits
       return result
 
+  peekBitsMost16LE: (numBits) ->
+    if @availableBits() < numBits
+      return null
     if numBits > 32
-      throw new RangeError('Cannot write more than 32 bits.')
+      throw new Error("Cannot read more than 32 bits (tried #{numBits}).")
+    needBits = numBits - @_state.bitsInBB
+    if needBits > 0
+      needBytes = Math.ceil(needBits / 8)
+      if needBytes > 2
+        newBits = @peekUInt32LE()
+        # Swap high 16 bits with low 16 bits.
+        newBits = ((newBits >> 16) | ((newBits & 0xFFFF) << 16)) >>> 0
+        keepBits = 32 - needBits
+      else if needBytes > 0
+        newBits = @peekUInt16LE()
+        keepBits = 16 - needBits
 
-    @saveState()
-    result = @_state.bitBuffer
-    bitsToRead = numBits - @_state.bitsInBB
-    @_advanceBB(@_state.bitsInBB)
-
-    while bitsToRead
-      # Fill the bit buffer with 16 bits.
-      @_state.bitBuffer = @peekUInt16LE()
-      if @_state.bitBuffer == null
-        @restoreState()
-        return null
-      @_state.bitsInBB = 16
-
-      # Consume as much as we need.
-      bitsThisTurn = Math.min(16, bitsToRead)
-      # Make room.
-      result <<= bitsThisTurn
-      result |= @_state.bitBuffer >>> (@_state.bitsInBB - bitsThisTurn)
-      @_advanceBB(bitsThisTurn)
-      bitsToRead -= bitsThisTurn
-
-    if peek
-      restoreState()
+      return ((@_state.bitBuffer << needBits) | (newBits >>> keepBits)) >>> 0
     else
-      discardState()
+      # Read entirely from bb.
+      keepBits = @_state.bitsInBB - numBits
+      return @_state.bitBuffer >>> keepBits
 
-    return result
+  ###########################################################################
 
   readString: (numBytes, encoding='utf8', trimNull=true, _peek=false) ->
     if numBytes > @_state.availableBytes
       return null
-    @_checkBitAlignment()
 
     if @_state.currentBuffer.length - @_state.currentBufferPos >= numBytes
       # Read entirely from current buffer.
@@ -384,7 +534,6 @@ class TypedReaderNodeBuffer extends TypedReader
   readBuffer: (numBytes, _peek=false) ->
     if numBytes > @_state.availableBytes
       return null
-    @_checkBitAlignment()
 
     if @_state.currentBuffer.length - @_state.currentBufferPos >= numBytes
       # Read entirely from current buffer.
@@ -454,7 +603,6 @@ class TypedReaderNodeBuffer extends TypedReader
     return () ->
       if numBytes > @_state.availableBytes
         return null
-      @_checkBitAlignment()
       if @_state.currentBuffer.length - @_state.currentBufferPos >= numBytes
         # Read directly from current buffer.
         result = bufferFunc.call(@_state.currentBuffer, @_state.currentBufferPos)
@@ -555,10 +703,6 @@ class TypedReaderNodeBuffer extends TypedReader
 #############################################################################
 
 # class TypedReaderW3CFile extends TypedReader
-
-# #############################################################################
-
-# class TypedReaderNodeBuffer extends TypedReader
 
 # #############################################################################
 

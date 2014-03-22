@@ -281,7 +281,7 @@ basicTypes =
 # buffer(length)
 #
 
-makeBitsType = (readFunc, writeFunc)
+makeBitsType = (readFunc, writeFunc) ->
   class BitsType extends Type
     constructor: (@numBits) ->
       if typeof numBits == 'number'
@@ -295,6 +295,20 @@ makeBitsType = (readFunc, writeFunc)
 
 constructorTypes =
   Bits: makeBitsType('readBits', 'writeBits')
+  BitsMost: makeBitsType('readBitsMost', 'writeBitsMost')
+  BitsLeast: makeBitsType('readBitsLeast', 'writeBitsLeast')
+  BitsMost16LE: makeBitsType('readBitsMost16LE', 'writeBitsMost16LE')
+
+  Buffer: class BufferType extends Type
+    constructor: (@numBytes) ->
+      if typeof numBytes == 'number'
+        @sizeBits = numBytes*8
+      return
+    read: (reader, context) ->
+      length = @getLength(reader, context, @numBytes)
+      return reader.readBuffer(length)
+    write: (writer, value, context) ->
+      return writer.writeBuffer(value)
 
   Bytes: class BytesType extends Type
     constructor: (@numBytes) ->
