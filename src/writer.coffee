@@ -12,17 +12,16 @@
 
 
 
-types = require('./types')
 EventEmitter = require('events').EventEmitter
 
-class TypedWriter extends EventEmitter
+class StreamWriter extends EventEmitter
 
 
-class TypedWriterNodeBuffer extends TypedWriter
-  constructor: (@typeDecls = {}, options = {}) ->
-    @littleEndian = options.littleEndian ? @typeDecls.StreamTypeOptions?.littleEndian ? false
+class StreamWriterNodeBuffer extends StreamWriter
+  constructor: (options = {}) ->
+    @littleEndian = options.littleEndian ? false
     @bufferSize = Math.max(options.bufferSize ? 32768, 8)
-    bitStyle = options.bitStyle ? @typeDecls.StreamTypeOptions?.bitStyle ? 'most'
+    bitStyle = options.bitStyle ? 'most'
     switch bitStyle
       when 'most'
         @writeBits = @writeBitsMost
@@ -43,7 +42,6 @@ class TypedWriterNodeBuffer extends TypedWriter
     @_bitBuffer = 0
     @_bitsInBB = 0
     @_bytesWritten = 0
-    @_types = new types.Types(@typeDecls)
 
   tell: ->
     return @_bytesWritten
@@ -221,15 +219,5 @@ class TypedWriterNodeBuffer extends TypedWriter
       @writeBits(0, (16-@_bitsInBB))
     return
 
-  ###########################################################################
-  # Type methods.
-  ###########################################################################
 
-  write: (typeName, value) ->
-    type = @_types.typeMap[typeName]
-    if not type
-      throw new Error("Type #{typeName} not defined.")
-    return type.write(this, value)
-
-
-exports.TypedWriterNodeBuffer = TypedWriterNodeBuffer
+exports.StreamWriterNodeBuffer = StreamWriterNodeBuffer

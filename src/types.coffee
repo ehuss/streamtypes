@@ -19,7 +19,7 @@ class Type
       when 'number'
         return value
       when 'string'
-        return context[value]
+        return context.getValue(value)
       when 'function'
         return value(reader, context)
 
@@ -54,6 +54,15 @@ class Types
       @typeConstructors[key] = value
     @_makeTypes()
 
+  _fixTypeName: (name) ->
+    if @typeDecls.StreamTypeOptions?.littleEndian?
+      if name of endianMap
+        return endianMap[name][if @typeDecls.StreamTypeOptions.littleEndian then 1 else 0]
+    if @typeDecls.StreamTypeOptions?.bitStyle?
+      if name == 'Bits'
+        return bitStyleMap[@typeDecls.StreamTypeOptions.bitStyle]
+    return name
+
   _makeTypes: () ->
     # Key is the undefined type name.
     # Value is a list of type declarations using that type.  They may be a
@@ -83,26 +92,27 @@ class Types
       if key == 'StreamTypeOptions'
         continue
       if typeof typeDecl == 'string'
-        t = @typeMap[typeDecl]
+        typeName = @_fixTypeName(typeDecl)
+        t = @typeMap[typeName]
         if t
           # Type alias.
           @typeMap[key] = t
           typeDefined(key, t)
         else
-          t = @typeConstructors[typeDecl]
+          t = @typeConstructors[typeName]
           if t
             # Constructor without arguments.
             @typeMap[key] = ti = new t()
             typeDefined(key, ti)
           else
             # Wait until it is defined.
-            undefinedList = undefinedTypes[typeDecl] or
-                            (undefinedTypes[typeDecl] = [])
+            undefinedList = undefinedTypes[typeName] or
+                            (undefinedTypes[typeName] = [])
             undefinedList.push(key)
 
       else if typeDecl instanceof Array
         # Type declaration with arguments.
-        typeConstructorName = typeDecl[0]
+        typeConstructorName = @_fixTypeName(typeDecl[0])
         typeArgs = typeDecl[1...]
         t = @typeConstructors[typeConstructorName]
         if t
@@ -142,13 +152,13 @@ class Types
 
   toType: (typeDecl) ->
     if typeof typeDecl == 'string'
-      type = @typeMap[typeDecl]
+      type = @typeMap[@_fixTypeName(typeDecl)]
       if not type
         throw new Error("Use of undefined type `#{typeDecl}`.")
       return type
 
     else if typeDecl instanceof Array
-      typeConstructorName = typeDecl[0]
+      typeConstructorName = @_fixTypeName(typeDecl[0])
       typeArgs = typeDecl[1...]
       t = @typeConstructors[typeConstructorName]
       if t
@@ -168,118 +178,197 @@ class Types
   sizeof: (typeName) ->
     return @typeMap[typeName].sizeBits
 
+#############################################################################
+
+class Context
+  constructor: (@previous, @values = {}) ->
+
+  getValue: (name) ->
+    if name of @values
+      return @values[name]
+    if name.indexOf('.') != -1
+      thing = this
+      for part in name.split('.')
+        if thing instanceof Context
+          thing = thing.getValue(part)
+        else
+          thing = thing[part]
+      return thing
+    if @previous
+      return @previous.getValue(name)
+
+  setValue: (name, value) ->
+    @values[name] = value
+
+class TypeBase
+  constructor: (@stream, types = {}) ->
+    if types instanceof Types
+      @types = types
+    else
+      @types = new Types(types)
+
+  withNewContext: (currentContext, f) ->
+    newContext = new Context(currentContext)
+    f(newContext)
+
+  withNewFilledContext: (currentContext, newObj, f) ->
+    newContext = new Context(currentContext, newObj)
+    f(newContext)
+
+
+class TypeReader extends TypeBase
+
+  read: (typeName, context = undefined) ->
+    if context != undefined and not (context instanceof Context)
+      context = new Context(null, context)
+    typeName = @types._fixTypeName(typeName)
+    type = @types.typeMap[typeName]
+    if not type
+      throw new Error("Type #{typeName} not defined.")
+    return type.read(this, context)
+
+  peek: (typeName, context = undefined) ->
+    typeName = @types._fixTypeName(typeName)
+    @stream.saveState()
+    try
+      return @read(typeName, context)
+    finally
+      @stream.restoreState()
+
+class TypeWriter extends TypeBase
+
+  write: (typeName, value, context = undefined) ->
+    if context != undefined and not context instanceof Context
+      context = new Context(null, context)
+    typeName = @types._fixTypeName(typeName)
+    type = @types.typeMap[typeName]
+    if not type
+      throw new Error("Type #{typeName} not defined.")
+    return type.write(this, value, context)
+
+
+#############################################################################
 
 basicTypes =
   Int8:     class Int8 extends Type
     sizeBits: 8
-    read: (reader) -> reader.readInt8()
-    write: (writer, value) -> writer.writeInt8(value)
+    read: (reader) -> reader.stream.readInt8()
+    write: (writer, value) -> writer.stream.writeInt8(value)
   Int16:    class Int16 extends Type
     sizeBits: 16
-    read: (reader) -> reader.readInt16()
-    write: (writer, value) -> writer.writeInt16(value)
+    read: (reader) -> reader.stream.readInt16()
+    write: (writer, value) -> writer.stream.writeInt16(value)
   Int16BE:  class Int16BE extends Type
     sizeBits: 16
-    read: (reader) -> reader.readInt16BE()
-    write: (writer, value) -> writer.writeInt16BE(value)
+    read: (reader) -> reader.stream.readInt16BE()
+    write: (writer, value) -> writer.stream.writeInt16BE(value)
   Int16LE:  class Int16LE extends Type
     sizeBits: 16
-    read: (reader) -> reader.readInt16LE()
-    write: (writer, value) -> writer.writeInt16LE(value)
+    read: (reader) -> reader.stream.readInt16LE()
+    write: (writer, value) -> writer.stream.writeInt16LE(value)
   Int32:    class Int32 extends Type
     sizeBits: 32
-    read: (reader) -> reader.readInt32()
-    write: (writer, value) -> writer.writeInt32(value)
+    read: (reader) -> reader.stream.readInt32()
+    write: (writer, value) -> writer.stream.writeInt32(value)
   Int32BE:  class Int32BE extends Type
     sizeBits: 32
-    read: (reader) -> reader.readInt32BE()
-    write: (writer, value) -> writer.writeInt32BE(value)
+    read: (reader) -> reader.stream.readInt32BE()
+    write: (writer, value) -> writer.stream.writeInt32BE(value)
   Int32LE:  class Int32LE extends Type
     sizeBits: 32
-    read: (reader) -> reader.readInt32LE()
-    write: (writer, value) -> writer.writeInt32LE(value)
+    read: (reader) -> reader.stream.readInt32LE()
+    write: (writer, value) -> writer.stream.writeInt32LE(value)
   Int64:    class Int64 extends Type
     sizeBits: 64
-    read: (reader) -> reader.readInt64()
-    write: (writer, value) -> writer.writeInt64(value)
+    read: (reader) -> reader.stream.readInt64()
+    write: (writer, value) -> writer.stream.writeInt64(value)
   Int64BE:  class Int64BE extends Type
     sizeBits: 64
-    read: (reader) -> reader.readInt64BE()
-    write: (writer, value) -> writer.writeInt64BE(value)
+    read: (reader) -> reader.stream.readInt64BE()
+    write: (writer, value) -> writer.stream.writeInt64BE(value)
   Int64LE:  class Int64LE extends Type
     sizeBits: 64
-    read: (reader) -> reader.readInt64LE()
-    write: (writer, value) -> writer.writeInt64LE(value)
+    read: (reader) -> reader.stream.readInt64LE()
+    write: (writer, value) -> writer.stream.writeInt64LE(value)
   UInt8:    class UInt8 extends Type
     sizeBits: 8
-    read: (reader) -> reader.readUInt8()
-    write: (writer, value) -> writer.writeUInt8(value)
+    read: (reader) -> reader.stream.readUInt8()
+    write: (writer, value) -> writer.stream.writeUInt8(value)
   UInt16:   class UInt16 extends Type
     sizeBits: 16
-    read: (reader) -> reader.readUInt16()
-    write: (writer, value) -> writer.writeUInt16(value)
+    read: (reader) -> reader.stream.readUInt16()
+    write: (writer, value) -> writer.stream.writeUInt16(value)
   UInt16BE: class UInt16BE extends Type
     sizeBits: 16
-    read: (reader) -> reader.readUInt16BE()
-    write: (writer, value) -> writer.writeUInt16BE(value)
+    read: (reader) -> reader.stream.readUInt16BE()
+    write: (writer, value) -> writer.stream.writeUInt16BE(value)
   UInt16LE: class UInt16LE extends Type
     sizeBits: 16
-    read: (reader) -> reader.readUInt16LE()
-    write: (writer, value) -> writer.writeUInt16LE(value)
+    read: (reader) -> reader.stream.readUInt16LE()
+    write: (writer, value) -> writer.stream.writeUInt16LE(value)
   UInt32:   class UInt32 extends Type
     sizeBits: 32
-    read: (reader) -> reader.readUInt32()
-    write: (writer, value) -> writer.writeUInt32(value)
+    read: (reader) -> reader.stream.readUInt32()
+    write: (writer, value) -> writer.stream.writeUInt32(value)
   UInt32BE: class UInt32BE extends Type
     sizeBits: 32
-    read: (reader) -> reader.readUInt32BE()
-    write: (writer, value) -> writer.writeUInt32BE(value)
+    read: (reader) -> reader.stream.readUInt32BE()
+    write: (writer, value) -> writer.stream.writeUInt32BE(value)
   UInt32LE: class UInt32LE extends Type
     sizeBits: 32
-    read: (reader) -> reader.readUInt32LE()
-    write: (writer, value) -> writer.writeUInt32LE(value)
+    read: (reader) -> reader.stream.readUInt32LE()
+    write: (writer, value) -> writer.stream.writeUInt32LE(value)
   UInt64:   class UInt64 extends Type
     sizeBits: 64
-    read: (reader) -> reader.readUInt64()
-    write: (writer, value) -> writer.writeUInt64(value)
+    read: (reader) -> reader.stream.readUInt64()
+    write: (writer, value) -> writer.stream.writeUInt64(value)
   UInt64BE: class UInt64BE extends Type
     sizeBits: 64
-    read: (reader) -> reader.readUInt64BE()
-    write: (writer, value) -> writer.writeUInt64BE(value)
+    read: (reader) -> reader.stream.readUInt64BE()
+    write: (writer, value) -> writer.stream.writeUInt64BE(value)
   UInt64LE: class UInt64LE extends Type
     sizeBits: 64
-    read: (reader) -> reader.readUInt64LE()
-    write: (writer, value) -> writer.writeUInt64LE(value)
+    read: (reader) -> reader.stream.readUInt64LE()
+    write: (writer, value) -> writer.stream.writeUInt64LE(value)
   Float:    class Float extends Type
     sizeBits: 32
-    read: (reader) -> reader.readFloat()
-    write: (writer, value) -> writer.writeFloat(value)
+    read: (reader) -> reader.stream.readFloat()
+    write: (writer, value) -> writer.stream.writeFloat(value)
   FloatBE:  class FloatBE extends Type
     sizeBits: 32
-    read: (reader) -> reader.readFloatBE()
-    write: (writer, value) -> writer.writeFloatBE(value)
+    read: (reader) -> reader.stream.readFloatBE()
+    write: (writer, value) -> writer.stream.writeFloatBE(value)
   FloatLE:  class FloatLE extends Type
     sizeBits: 32
-    read: (reader) -> reader.readFloatLE()
-    write: (writer, value) -> writer.writeFloatLE(value)
+    read: (reader) -> reader.stream.readFloatLE()
+    write: (writer, value) -> writer.stream.writeFloatLE(value)
   Double:   class Double extends Type
     sizeBits: 64
-    read: (reader) -> reader.readDouble()
-    write: (writer, value) -> writer.writeDouble(value)
+    read: (reader) -> reader.stream.readDouble()
+    write: (writer, value) -> writer.stream.writeDouble(value)
   DoubleBE: class DoubleBE extends Type
     sizeBits: 64
-    read: (reader) -> reader.readDoubleBE()
-    write: (writer, value) -> writer.writeDoubleBE(value)
+    read: (reader) -> reader.stream.readDoubleBE()
+    write: (writer, value) -> writer.stream.writeDoubleBE(value)
   DoubleLE: class DoubleLE extends Type
     sizeBits: 64
-    read: (reader) -> reader.readDoubleLE()
-    write: (writer, value) -> writer.writeDoubleLE(value)
+    read: (reader) -> reader.stream.readDoubleLE()
+    write: (writer, value) -> writer.stream.writeDoubleLE(value)
 
+endianMap =
+  Int16:    ['Int16BE', 'Int16LE']
+  Int32:    ['Int32BE', 'Int32LE']
+  Int64:    ['Int64BE', 'Int64LE']
+  UInt16:   ['UInt16BE', 'UInt16LE']
+  UInt32:   ['UInt32BE', 'UInt32LE']
+  UInt64:   ['UInt64BE', 'UInt64LE']
+  Float:    ['FloatBE', 'FloatLE']
+  Double:   ['DoubleBE', 'DoubleLE']
 
-
-# TODO
-# buffer(length)
-#
+bitStyleMap =
+  most: 'BitsMost'
+  least: 'BitsLeast'
+  most16le: 'BitsMost16LE'
 
 makeBitsType = (readFunc, writeFunc) ->
   class BitsType extends Type
@@ -288,10 +377,10 @@ makeBitsType = (readFunc, writeFunc) ->
         @sizeBits = numBits
     read: (reader, context) ->
       length = @getLength(reader, context, @numBits)
-      return reader[readFunc](length)
+      return reader.stream[readFunc](length)
     write: (writer, value, context) ->
       length = @getLength(null, context, @numBits)
-      return writer[writeFunc](length)
+      return writer.stream[writeFunc](value, length)
 
 constructorTypes =
   Bits: makeBitsType('readBits', 'writeBits')
@@ -306,9 +395,9 @@ constructorTypes =
       return
     read: (reader, context) ->
       length = @getLength(reader, context, @numBytes)
-      return reader.readBuffer(length)
+      return reader.stream.readBuffer(length)
     write: (writer, value, context) ->
-      return writer.writeBuffer(value)
+      return writer.stream.writeBuffer(value)
 
   Bytes: class BytesType extends Type
     constructor: (@numBytes) ->
@@ -317,9 +406,9 @@ constructorTypes =
       return
     read: (reader, context) ->
       length = @getLength(reader, context, @numBytes)
-      return reader.readBytes(length)
+      return reader.stream.readBytes(length)
     write: (writer, value, context) ->
-      return writer.writeBytes(value)
+      return writer.stream.writeBytes(value)
 
   Const: class ConstType extends Type
     constructor: (@typeDecl, @expectedValue) ->
@@ -354,19 +443,19 @@ constructorTypes =
       @failAtMaxBytes = @options.failAtMaxBytes ? false
     read: (reader, context) ->
       length = @getLength(reader, context, @maxBytes)
-      reader.saveState()
+      reader.stream.saveState()
       try
         bytesLeft = length
         buffer = new Buffer(1000)
         bufferSize = 1000
         bufferUsed = 0
         while bytesLeft
-          byte = reader.readUInt8()
+          byte = reader.stream.readUInt8()
           if byte == null
-            reader.restoreState()
+            reader.stream.restoreState()
             return null
           else if byte == 0
-            reader.discardState()
+            reader.stream.discardState()
             return buffer.toString(@encoding, 0, bufferUsed)
           else
             buffer[bufferUsed] = byte
@@ -380,10 +469,10 @@ constructorTypes =
         # Ran out of bytes.
         if @failAtMaxBytes
           throw new RangeError("Did not find null string terminator within #{@maxBytes} bytes.")
-        reader.discardState()
+        reader.stream.discardState()
         return buffer.toString(@encoding, 0, bufferUsed)
       catch e
-        reader.restoreState()
+        reader.stream.restoreState()
         throw e
 
     write: (writer, value, context) ->
@@ -393,32 +482,32 @@ constructorTypes =
       buf = new Buffer(value, @encoding)
       if buf.length > length
         throw new RangeError("String value is too long (was #{buf.length}, limit is #{length}).")
-      writer.writeBuffer(buf)
+      writer.stream.writeBuffer(buf)
       if buf.length < length
         # Write a nul terminator.
-        writer.writeUInt8(0)
+        writer.stream.writeUInt8(0)
       return
 
   String: class StringType extends Type
-    constructor: (@numBytes, @encoding='utf8') ->
+    constructor: (@numBytes, @options = {}) ->
       if typeof numBytes == 'number'
         @sizeBits = numBytes*8
     read: (reader, context) ->
       length = @getLength(reader, context, @numBytes)
-      return reader.readString(length, @encoding)
+      return reader.stream.readString(length, @options)
     write: (writer, value, context) ->
       length = @getLength(null, context, @numBytes)
       # Need to first convert the value to bytes in order to know how long it
       # is in the desired encoding.
-      buf = new Buffer(value, @encoding)
+      buf = new Buffer(value, @options.encoding ? 'utf8')
       if buf.length > length
         throw new RangeError("String value is too long (was #{buf.length}, limit is #{length}).")
-      writer.writeBuffer(buf)
+      writer.stream.writeBuffer(buf)
       extra = length - buf.length
       if extra
         eBuf = new Buffer(extra)
         eBuf.fill(0)
-        writer.writeBuffer(eBuf)
+        writer.stream.writeBuffer(eBuf)
       return
 
 
@@ -433,31 +522,31 @@ constructorTypes =
     _read_number: (reader, context) ->
       if @sizeBits
         # Minor optimization, probably not necessary.
-        if @reader.availableBits() >= @sizeBits
+        if @reader.stream.availableBits() >= @sizeBits
           return (@type.read(reader, context) for n in [0...@length])
         else
           return null
       return @_read(reader, context, @length)
     _read_string: (reader, context) ->
-      num = context[@length]
+      num = context.getValue(@length)
       return @_read(reader, context, num)
     _read_function: (reader, context) ->
       num = @length(reader, context)
       return @_read(reader, context, num)
     _read: (reader, context, num) ->
       result = []
-      reader.saveState()
+      reader.stream.saveState()
       try
         for n in [0...num]
           value = @type.read(reader, context)
           if value == null
-            reader.restoreState()
+            reader.stream.restoreState()
             return null
           result.push(value)
-        reader.discardState()
+        reader.stream.discardState()
         return result
       catch e
-        reader.restoreState()
+        reader.stream.restoreState()
         throw e
     write: (writer, value, context) ->
       for el in value
@@ -479,30 +568,32 @@ constructorTypes =
         @memberTypes.push(type)
       return
     read: (reader, context) ->
-      reader.saveState()
+      reader.stream.saveState()
       try
-        newContext = {}
+        reader.withNewContext context, (newContext) =>
+          for n in [0...@memberTypes.length] by 2
+            memberName = @memberTypes[n]
+            memberType = @memberTypes[n+1]
+            value = memberType.read(reader, newContext)
+            if value == null
+              reader.stream.restoreState()
+              return null
+            newContext.setValue(memberName, value)
+          reader.stream.discardState()
+          return newContext.values
+      catch e
+        reader.stream.restoreState()
+        throw e
+    write: (writer, value, context) ->
+      writer.withNewFilledContext context, value, (newContext) =>
         for n in [0...@memberTypes.length] by 2
           memberName = @memberTypes[n]
           memberType = @memberTypes[n+1]
-          value = memberType.read(reader, newContext)
-          if value == null
-            reader.restoreState()
-            return null
-          newContext[memberName] = value
-        reader.discardState()
-        return newContext
-      catch e
-        reader.restoreState()
-        throw e
-    write: (writer, value, context) ->
-      for n in [0...@memberTypes.length] by 2
-        memberName = @memberTypes[n]
-        memberType = @memberTypes[n+1]
-        memberType.write(writer, value[memberName], value)
+          memberType.write(writer, value[memberName], newContext)
       return
 
-
+  # Extends existing records.  Think like OO extends.  Give it a list of
+  # Record or ExtendedRecord types.
   ExtendedRecord: class ExtendedRecordType extends Type
     constructor: (@recordDecls...) ->
     resolveTypes: (types) ->
@@ -514,25 +605,26 @@ constructorTypes =
         @recordTypes.push(type)
       return
     read: (reader, context) ->
-      reader.saveState()
+      reader.stream.saveState()
       try
-        newContext = {}
-        for recordType in @recordTypes
-          recordValue = recordType.read(reader, newContext)
-          if recordValue == null
-            reader.restoreState()
-            return null
-          if recordValue != undefined
-            for key, value of recordValue
-              newContext[key] = value
-        reader.discardState()
-        return newContext
+        reader.withNewContext context, (newContext) =>
+          for recordType in @recordTypes
+            recordValue = recordType.read(reader, newContext)
+            if recordValue == null
+              reader.stream.restoreState()
+              return null
+            if recordValue != undefined
+              for key, value of recordValue
+                newContext.setValue(key, value)
+          reader.stream.discardState()
+          return newContext.values
       catch e
-        reader.restoreState()
+        reader.stream.restoreState()
         throw e
     write: (writer, value, context) ->
-      for recordType in @recordTypes
-        recordType.write(writer, value, value)
+      writer.withNewFilledContext context, value, (newContext) =>
+        for recordType in @recordTypes
+          recordType.write(writer, value, newContext)
       return
 
   Switch: class SwitchType extends Type
@@ -567,11 +659,11 @@ constructorTypes =
       @type = types.toType(@typeDecl)
       return
     read: (reader, context) ->
-      reader.saveState()
+      reader.stream.saveState()
       try
         return @type.read(reader, context)
       finally
-        reader.restoreState()
+        reader.stream.restoreState()
     write: (writer, value, context) ->
       throw new Error('Peek type is only used for readers.')
 
@@ -579,15 +671,15 @@ constructorTypes =
     constructor: (@numBytes, @fill=0) ->
     read: (reader, context) ->
       num = @getLength(reader, context, @numBytes)
-      if reader.availableBytes() < num
+      if reader.stream.availableBytes() < num
         return null
-      reader.skipBytes(num)
+      reader.stream.skipBytes(num)
       return undefined
     write: (writer, value, context) ->
       num = @getLength(null, context, @numBytes)
       buf = new Buffer(num)
       buf.fill(0)
-      return writer.writeBuffer(buf)
+      return writer.stream.writeBuffer(buf)
 
   Flags: class FlagsType extends Type
     constructor: (@dataTypeDecl, @flagNames...) ->
@@ -627,7 +719,11 @@ constructorTypes =
   #   read: (reader, context) ->
 
   If: class IfType extends Type
-    constructor: (@conditional, @trueTypeDecl, @falseTypeDecl) ->
+    constructor: (conditional, @trueTypeDecl, @falseTypeDecl) ->
+      if typeof conditional == 'string'
+        @conditional = (reader, context) -> context.getValue(conditional)
+      else
+        @conditional = conditional
     resolveTypes: (types) ->
       @trueType = if @trueTypeDecl then types.toType(@trueTypeDecl) else null
       @falseType = if @falseTypeDecl then types.toType(@falseTypeDecl) else null
@@ -652,3 +748,6 @@ constructorTypes =
 exports.Types = Types
 exports.Type = Type
 exports.ConstError = ConstError
+exports.Context = Context
+exports.TypeReader = TypeReader
+exports.TypeWriter = TypeWriter

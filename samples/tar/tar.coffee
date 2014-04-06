@@ -40,7 +40,7 @@ types =
     constructor: (@numBytes, @base) ->
       @sizeBits = numBytes*8
     read: (reader, context) ->
-      s = reader.readString(@numBytes)
+      s = reader.stream.readString(@numBytes)
       if s == null
         return null
       return parseInt(s, @base)
@@ -118,7 +118,8 @@ class TarReader extends EventEmitter
   #
   # @param readableStream {stream.Readable} The stream to read from.
   processStream: (readableStream) ->
-    @_reader = new streamtypes.TypedReaderNodeBuffer(types)
+    stream = new streamtypes.StreamReaderNodeBuffer()
+    @_reader = new streamtypes.TypeReader(stream, types)
     onData = (chunk) => @_processChunk(chunk)
     onEnd = => @_processEnd()
     readableStream.on('data', onData)
@@ -130,7 +131,7 @@ class TarReader extends EventEmitter
 
   # Processes a single chunk from the input stream.
   _processChunk: (chunk) ->
-    @_reader.pushBuffer(chunk)
+    @_reader.stream.pushBuffer(chunk)
     @_runStates()
     return
 
@@ -140,7 +141,7 @@ class TarReader extends EventEmitter
     if @_currentState == null
       # end event already emitted.
       return
-    if @_reader.availableBytes() or not @_currentState==@_sHeader
+    if @_reader.stream.availableBytes() or not @_currentState==@_sHeader
       @emit('error', new Error('Truncated tar file.'))
     @emit('end')
     return
@@ -166,7 +167,7 @@ class TarReader extends EventEmitter
   # Parse state Header.
   _sHeader: ->
     # Check for null end-of-archive.
-    raw = @_reader.peekBuffer(512)
+    raw = @_reader.stream.peekBuffer(512)
     if raw == null
       return
     if @_isNullBlock(raw)
@@ -182,7 +183,7 @@ class TarReader extends EventEmitter
       when 'gnutar'
         extend(header, @_reader.read('GNUtarHeader'))
       when 'tar'
-        @_reader.skipBytes(255)
+        @_reader.stream.skipBytes(255)
     @_fileBytesRemaining = header.size
     @_filePaddingRemaining = (512-(header.size%512))%512
     if header.prefix
@@ -193,7 +194,7 @@ class TarReader extends EventEmitter
     return @_gotoNextState(@_sReadFile)
 
   _determineTarType: ->
-    magic = @_reader.peekString(8, 'utf8', false)
+    magic = @_reader.stream.peekString(8, {encoding: 'utf8', trimNull: false})
     if magic == 'ustar  \0'
       type = 'gnutar'
     else if magic[0...5] == 'ustar'
@@ -210,7 +211,7 @@ class TarReader extends EventEmitter
 
   # Parse state reading the last terminating null block.
   _sLastBlock: ->
-    raw = @_reader.readBuffer(512)
+    raw = @_reader.stream.readBuffer(512)
     if raw == null
       return
     @emit('end')
@@ -235,10 +236,10 @@ class TarReader extends EventEmitter
   _sReadFile: ->
 
     while @_fileBytesRemaining
-      numBytes = Math.min(@_fileBytesRemaining, @_reader.availableBytes())
+      numBytes = Math.min(@_fileBytesRemaining, @_reader.stream.availableBytes())
       if not numBytes
         return
-      chunk = @_reader.readBuffer(numBytes)
+      chunk = @_reader.stream.readBuffer(numBytes)
       if chunk == null
         throw new Error("Internal error, couldn't read #{numBytes} bytes.")
       @emit('data', chunk)
@@ -248,10 +249,10 @@ class TarReader extends EventEmitter
   # Parse state reading the padding at the end of a file.
   _sReadFilePadding: ->
     while @_filePaddingRemaining
-      numBytes = Math.min(@_filePaddingRemaining, @_reader.availableBytes())
+      numBytes = Math.min(@_filePaddingRemaining, @_reader.stream.availableBytes())
       if not numBytes
         return
-      @_reader.skipBytes(numBytes)
+      @_reader.stream.skipBytes(numBytes)
       @_filePaddingRemaining -= numBytes
     @emit('fileEnd')
     return @_gotoNextState(@_sHeader)

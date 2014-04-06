@@ -11,17 +11,15 @@
 #    - When aligned, but multiple of 8 still in bit buffer, readxxx should clear the bit buffer.
 #    -
 
-types = require('./types')
-
 MAX_BITS = 32
 
-class TypedReader
+class StreamReader
 
-class TypedReaderNodeBuffer extends TypedReader
+class StreamReaderNodeBuffer extends StreamReader
 
-  constructor: (@typeDecls = {}, options = {}) ->
-    @littleEndian = options.littleEndian ? @typeDecls.StreamTypeOptions?.littleEndian ? false
-    bitStyle = options.bitStyle ? @typeDecls.StreamTypeOptions?.bitStyle ? 'most'
+  constructor: (options = {}) ->
+    @littleEndian = options.littleEndian ?  false
+    bitStyle = options.bitStyle ? 'most'
     switch bitStyle
       when 'most'
         @readBits = @readBitsMost
@@ -45,12 +43,11 @@ class TypedReaderNodeBuffer extends TypedReader
       currentBufferPos: 0
       position: 0
     @_states = []
-    @_types = new types.Types(@typeDecls)
 
   slice: (start=0, end=undefined) ->
     # TODO bitsInBB
     # Create a clone.
-    r = new TypedReaderNodeBuffer()
+    r = new StreamReaderNodeBuffer()
     r.littleEndian = @littleEndian
     r._defaultBitReader = @_defaultBitReader
     r._state = @_cloneState(@_state)
@@ -152,6 +149,14 @@ class TypedReaderNodeBuffer extends TypedReader
   discardState: () ->
     @_states.pop()
     return
+
+  clear: ->
+    @_state.availableBytes = 0
+    @_state.buffers = []
+    @_state.currentBuffer = null
+    @_state.currentBufferPos = 0
+    @_state.position = 0
+    @clearBitBuffer()
 
   # Advances the position of the current buffer.
   # This may move to following buffers.
@@ -502,9 +507,16 @@ class TypedReaderNodeBuffer extends TypedReader
 
   ###########################################################################
 
-  readString: (numBytes, encoding='utf8', trimNull=true, _peek=false) ->
+  readString: (numBytes, options = {}, _peek=false) ->
+    encoding = options.encoding ? 'utf8'
+    trimNull = options.trimNull ? true
+    returnTruncated = options.returnTruncated ? false
+
     if numBytes > @_state.availableBytes
-      return null
+      if returnTruncated
+        numBytes = @_state.availableBytes
+      else
+        return null
 
     if @_state.currentBuffer.length - @_state.currentBufferPos >= numBytes
       # Read entirely from current buffer.
@@ -522,8 +534,8 @@ class TypedReaderNodeBuffer extends TypedReader
 
     return result
 
-  peekString: (numBytes, encoding='utf8', trimNull=true) ->
-    return @readString(numBytes, encoding, trimNull, true)
+  peekString: (numBytes, options = {}) ->
+    return @readString(numBytes, options, true)
 
   # Read bytes.
   #
@@ -680,32 +692,12 @@ class TypedReaderNodeBuffer extends TypedReader
   readInt64BE: () ->
   readUInt64BE: () ->
 
-
-
-  # Type methods.
-
-  as: (types) ->
-    throw new Error('Not implemented.')
-
-  read: (typeName) ->
-    type = @_types.typeMap[typeName]
-    if not type
-      throw new Error("Type #{typeName} not defined.")
-    return type.read(this)
-
-  peek: (typeName) ->
-    @saveState()
-    try
-      return @read(typeName)
-    finally
-      @restoreState()
-
 #############################################################################
 
-# class TypedReaderW3CFile extends TypedReader
+# class StreamReaderW3CFile extends StreamReader
 
 # #############################################################################
 
-# class TypedReaderW3CArrayBuffer extends TypedReader
+# class StreamReaderW3CArrayBuffer extends StreamReader
 
-exports.TypedReaderNodeBuffer = TypedReaderNodeBuffer
+exports.StreamReaderNodeBuffer = StreamReaderNodeBuffer

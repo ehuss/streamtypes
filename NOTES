@@ -12,7 +12,7 @@ stop on uncaught
 use "debugger" keyword if necessary.
 
 Tests:
-node --debug-brk .\node_modules\jasmine-node\lib\jasmine-node\cli.js --captureExceptions --coffee .\spec\typed_spec.coffee
+node --debug-brk H:\Proj\streamtypes\node_modules\jasmine-node\lib\jasmine-node\cli.js --captureExceptions --coffee .\spec\typed_spec.coffee
 jasmine-node --captureExceptions --watch src --autotest --coffee spec
 
 Compression

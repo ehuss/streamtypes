@@ -1,3 +1,6 @@
+# TODO:
+# - Send data through 1 byte at a time.
+
 gzip = require('../gzip')
 fs = require('fs')
 

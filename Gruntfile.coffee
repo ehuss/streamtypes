@@ -40,6 +40,12 @@ module.exports = (grunt) ->
         options:
           transform: ['coffeeify']
           extensions: ['.coffee']
+      png:
+        files:
+          'samples/png/spec/pngview.js': ['samples/png/spec/pngview.coffee']
+        options:
+          transform: ['coffeeify']
+          extensions: ['.coffee']
 
     coffee:
       options:

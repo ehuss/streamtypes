@@ -1,41 +1,16 @@
 streamtypes = require('../src/index')
-TypedReaderNodeBuffer = streamtypes.TypedReaderNodeBuffer
+global[k] = v for k, v of require('./test_util')
+StreamReaderNodeBuffer = streamtypes.StreamReaderNodeBuffer
 
 # TODO
 # - partition more methods.
 # - bitreader option (least, most16le)
 
-partition = (seq) ->
-  if not seq.length
-    return []
-  else
-    results = [[seq]]
-    for n in [1...seq.length]
-      front = seq[0...n]
-      rest = seq[n...]
-      for perm in partition(rest)
-        perm.splice(0, 0, front)
-        results.push(perm)
-    return results
 
-bufferPartition = (bytes, f, typeDecls = {}, options = {}) ->
-  parts = partition(bytes)
-  for part in parts
-    r = new TypedReaderNodeBuffer(typeDecls, options)
-    for segment in part
-      b = new Buffer(segment)
-      r.pushBuffer(b)
-    f(r)
-  return
-
-mostLeast = (mostBytes, leastBytes, f) ->
-  bufferPartition(mostBytes, f)
-  bufferPartition(leastBytes, f, {}, {bitStyle: 'least'})
-
-describe 'TypedReaderNodeBuffer', ->
+describe 'StreamReaderNodeBuffer', ->
   describe 'Basic reads', ->
     it 'should handle no buffer', ->
-      r = new TypedReaderNodeBuffer()
+      r = new StreamReaderNodeBuffer()
       expect(r.readInt8()).toBeNull()
       expect(r.peekInt8()).toBeNull()
       expect(r.readUInt32()).toBeNull()
@@ -44,7 +19,7 @@ describe 'TypedReaderNodeBuffer', ->
       expect(r.readBytes(1)).toBeNull()
 
     it 'should read basic types', ->
-      r = new TypedReaderNodeBuffer()
+      r = new StreamReaderNodeBuffer()
       b = new Buffer([0xFF, 0x80,
                       0x0A, 0x0B, 0x0C, 0x0D,
                       0x80, 0x00, 0x00, 0x00,
@@ -78,7 +53,7 @@ describe 'TypedReaderNodeBuffer', ->
       expect(r.readInt8()).toBeNull()
 
     it 'should read a Node buffer', ->
-      r = new TypedReaderNodeBuffer()
+      r = new StreamReaderNodeBuffer()
       b1 = new Buffer([0x0A, 0x0B, 0x0C, 0x0D])
       b2 = new Buffer([0x0E])
       b3 = new Buffer([0x0F])
@@ -94,16 +69,16 @@ describe 'TypedReaderNodeBuffer', ->
     it 'should read a string', ->
       bufferPartition 'foo\0\0', (r) ->
         expect(r.peekString(5)).toBe('foo')
-        expect(r.peekString(5, 'utf8', false)).toBe('foo\0\0')
+        expect(r.peekString(5, {encoding: 'utf8', trimNull: false})).toBe('foo\0\0')
 
       bufferPartition 'foobar', (r) ->
         expect(r.peekString(3)).toBe('foo')
-        expect(r.peekString(3, 'utf8', false)).toBe('foo')
+        expect(r.peekString(3, {encoding: 'utf8', trimNull: false})).toBe('foo')
 
 
   describe 'Basic peeks', ->
     it 'should peek without advancing', ->
-      r = new TypedReaderNodeBuffer()
+      r = new StreamReaderNodeBuffer()
       b = new Buffer([0x0A, 0x0B, 0x0C, 0x0D])
       r.pushBuffer(b)
       expect(r.peekUInt8()).toBe(0x0A)
@@ -113,11 +88,11 @@ describe 'TypedReaderNodeBuffer', ->
 
   describe 'Options', ->
     it 'should handle littleEndian option', ->
-      r = new TypedReaderNodeBuffer(null, {littleEndian: true})
+      r = new StreamReaderNodeBuffer({littleEndian: true})
       b = new Buffer([0x0A, 0x0B, 0x0C, 0x0D])
       r.pushBuffer(b)
       expect(r.readUInt32()).toBe(0x0D0C0B0A)
-      r = new TypedReaderNodeBuffer(null, {littleEndian: false})
+      r = new StreamReaderNodeBuffer({littleEndian: false})
       r.pushBuffer(b)
       expect(r.readUInt32()).toBe(0x0A0B0C0D)
 
@@ -125,7 +100,7 @@ describe 'TypedReaderNodeBuffer', ->
 
   describe 'Bit reader', ->
     it 'should read bits', ->
-      mostLeast [0b10110001], [0b10001101],  (r) ->
+      mostLeastPartition [0b10110001], [0b10001101],  (r) ->
         expect(r.readBits(3)).toBe(0b101)
         expect(r.readBits(6)).toBeNull()
         expect(r.readBits(5)).toBe(0b10001)
@@ -165,15 +140,15 @@ describe 'TypedReaderNodeBuffer', ->
         expect(r.readBits(7)).toBe(0b1010101)
         expect(r.peekUInt8()).toBeNull()
         expect(r.readBits(1)).toBeNull()
-      ), {}, {bitStyle: 'least'}
+      ), {bitStyle: 'least'}
 
     it 'should handle unsigned 32-bits', ->
-      mostLeast [0b11111111, 0b11111111, 0b11111111, 0b11111111],
+      mostLeastPartition [0b11111111, 0b11111111, 0b11111111, 0b11111111],
       [0b11111111, 0b11111111, 0b11111111, 0b11111111], (r) ->
         expect(r.peekBits(32)).toBe(0xffffffff)
         expect(r.peekBits(1)).toBe(1)
 
-      mostLeast [0, 0, 0, 1, 0xff, 0xff, 0xff, 0xff],
+      mostLeastPartition [0, 0, 0, 1, 0xff, 0xff, 0xff, 0xff],
       [0, 0, 0, 0b10000000, 0xff, 0xff, 0xff, 0xff], (r) ->
         expect(r.readBits(31)).toBe(0)
         expect(r.peekBits(32)).toBe(0b11111111111111111111111111111111)
@@ -189,7 +164,7 @@ describe 'TypedReaderNodeBuffer', ->
         expect(r.peekBits(8)).toBe(0b11111111)
         expect(r.readBits(32)).toBe(0b01010101101010101000000011111111)
         expect(r.readBits(1)).toBeNull()
-      ), {}, {bitStyle: 'least'}
+      ), {bitStyle: 'least'}
 
     it 'most should read 3 bytes at a time', ->
       bufferPartition [0b11111111, 0b10000000, 0b10101010], (r) ->
@@ -201,7 +176,7 @@ describe 'TypedReaderNodeBuffer', ->
         expect(r.peekBits(8)).toBe(0b11111111)
         expect(r.readBits(24)).toBe(0b101010101000000011111111)
         expect(r.readBits(1)).toBeNull()
-      ), {}, {bitStyle: 'least'}
+      ), {bitStyle: 'least'}
 
     it 'most should read 2 bytes at a time', ->
       bufferPartition [0b11111111, 0b10000000], (r) ->
@@ -213,10 +188,10 @@ describe 'TypedReaderNodeBuffer', ->
         expect(r.peekBits(8)).toBe(0b11111111)
         expect(r.readBits(16)).toBe(0b1000000011111111)
         expect(r.readBits(1)).toBeNull()
-      ), {}, {bitStyle: 'least'}
+      ), {bitStyle: 'least'}
 
     it 'most should read 1 bytes at a time', ->
-      mostLeast [0b10101010], [0b10101010], (r) ->
+      mostLeastPartition [0b10101010], [0b10101010], (r) ->
         expect(r.peekBits(8)).toBe(0b10101010)
         expect(r.readBits(8)).toBe(0b10101010)
         expect(r.readBits(1)).toBeNull()
@@ -253,13 +228,13 @@ describe 'TypedReaderNodeBuffer', ->
         expect(r.availableBytes()).toBe(0)
         expect(r.availableBits()).toBe(0)
         expect(r.currentBitAlignment()).toBe(0)
-      ), {}, {bitStyle: 'least'}
+      ), {bitStyle: 'least'}
 
   ############################################################################
 
   describe 'currentBitAlignment', ->
     it 'should return number of bits to read to achieve alignment', ->
-      r = new TypedReaderNodeBuffer()
+      r = new StreamReaderNodeBuffer()
       b = new Buffer([0b10011101, 0b00100001])
       r.pushBuffer(b)
       expect(r.currentBitAlignment()).toBe(0)
@@ -272,7 +247,7 @@ describe 'TypedReaderNodeBuffer', ->
 
   describe 'Positioning', ->
     it 'should seek', ->
-      r = new TypedReaderNodeBuffer()
+      r = new StreamReaderNodeBuffer()
       b = new Buffer([0, 1, 2, 3, 4, 5, 6, 7, 8])
       r.pushBuffer(b)
       b = new Buffer([9, 0xa, 0xb, 0xc, 0xd, 0xe])
@@ -298,7 +273,7 @@ describe 'TypedReaderNodeBuffer', ->
 
   describe 'Slicing', ->
     it 'should slice (simple interior)', ->
-      r = new TypedReaderNodeBuffer()
+      r = new StreamReaderNodeBuffer()
       b = new Buffer([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
       r.pushBuffer(b)
       r2 = r[3...5]
@@ -308,7 +283,7 @@ describe 'TypedReaderNodeBuffer', ->
       expect(r2.tell()).toBe(2)
 
     it 'should slice (entire thing)', ->
-      r = new TypedReaderNodeBuffer()
+      r = new StreamReaderNodeBuffer()
       b = new Buffer([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
       r.pushBuffer(b)
       r2 = r[0...10]
@@ -322,7 +297,7 @@ describe 'TypedReaderNodeBuffer', ->
       expect(r3.readBytes(2)).toEqual([0,1])
 
     it 'should slice (end < start)', ->
-      r = new TypedReaderNodeBuffer()
+      r = new StreamReaderNodeBuffer()
       b = new Buffer([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
       r.pushBuffer(b)
       r2 = r[5...4]
@@ -331,7 +306,7 @@ describe 'TypedReaderNodeBuffer', ->
       expect(r2.readBytes(1)).toBeNull()
 
     it 'should slice (from offset)', ->
-      r = new TypedReaderNodeBuffer()
+      r = new StreamReaderNodeBuffer()
       b = new Buffer([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
       r.pushBuffer(b)
       r.skipBytes(2)
@@ -342,7 +317,7 @@ describe 'TypedReaderNodeBuffer', ->
       expect(r2.readBytes(2)).toEqual([3, 4])
 
     it 'should slice (across buffers)', ->
-      r = new TypedReaderNodeBuffer()
+      r = new StreamReaderNodeBuffer()
       b = new Buffer([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
       r.pushBuffer(b)
       b = new Buffer([10, 11, 12, 13, 14, 15])
@@ -367,7 +342,7 @@ describe 'TypedReaderNodeBuffer', ->
 
   describe 'States', ->
     it 'should save and restore state', ->
-      r = new TypedReaderNodeBuffer()
+      r = new StreamReaderNodeBuffer()
       b = new Buffer([0, 1])
       r.pushBuffer(b)
       b = new Buffer([2, 3])
@@ -388,7 +363,7 @@ describe 'TypedReaderNodeBuffer', ->
       expect(r.readUInt8()).toBe(0)
 
     it 'should save and restore from empty state', ->
-      r = new TypedReaderNodeBuffer()
+      r = new StreamReaderNodeBuffer()
       expect(r.readUInt8()).toBeNull()
       r.saveState()
       b = new Buffer([0, 1])
