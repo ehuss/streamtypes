@@ -52,6 +52,26 @@ describe 'StreamReaderNodeBuffer', ->
       expect(r.readDoubleLE()).toBe(1.7976931348623157e+308)
       expect(r.readInt8()).toBeNull()
 
+    it 'should handle 24-bit values', ->
+      r = new StreamReaderNodeBuffer()
+      expected = [
+        # Buffer             UInt24BE  Int24BE   UInt24LE  Int24LE
+        [[0x0a, 0x0b, 0x0c], 0x0a0b0c, 0x0a0b0c, 0x0c0b0a, 0x0c0b0a],
+        [[0xff, 0xff, 0xff], 0xffffff,       -1, 0xffffff,       -1],
+        [[0x00, 0x00, 0x00],        0,        0,        0,        0],
+        [[0xff, 0x00, 0x00], 0xff0000, -0x10000,     0xff,     0xff],
+        [[0x00, 0x00, 0xff],     0xff,     0xff, 0xff0000, -0x10000],
+        [[0x80, 0x00, 0x00], 0x800000,-0x800000,     0x80,     0x80],
+        [[0x00, 0x00, 0x80],     0x80,     0x80, 0x800000,-0x800000],
+      ]
+      for [bytes, a, b, c, d] in expected
+        buf = new Buffer(bytes)
+        r.pushBuffer(buf)
+        expect(r.peekUInt24BE()).toBe(a)
+        expect(r.peekInt24BE()).toBe(b)
+        expect(r.peekUInt24LE()).toBe(c)
+        expect(r.readInt24LE()).toBe(d)
+
     it 'should read a Node buffer', ->
       r = new StreamReaderNodeBuffer()
       b1 = new Buffer([0x0A, 0x0B, 0x0C, 0x0D])

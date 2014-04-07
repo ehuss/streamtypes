@@ -117,19 +117,19 @@ class StreamWriterNodeBuffer extends StreamWriter
         return bigEndianFunc.call(this, value)
 
   writeUInt8:    _makeBufferWrite(1, Buffer::writeUInt8)
-  writeUInt16BE: _makeBufferWrite(2, Buffer::writeUInt16BE, false)
-  writeUInt16LE: _makeBufferWrite(2, Buffer::writeUInt16LE, false)
-  writeUInt32BE: _makeBufferWrite(4, Buffer::writeUInt32BE, false)
-  writeUInt32LE: _makeBufferWrite(4, Buffer::writeUInt32LE, false)
-  writeInt8:     _makeBufferWrite(1, Buffer::writeInt8, false)
-  writeInt16BE:  _makeBufferWrite(2, Buffer::writeInt16BE, false)
-  writeInt16LE:  _makeBufferWrite(2, Buffer::writeInt16LE, false)
-  writeInt32BE:  _makeBufferWrite(4, Buffer::writeInt32BE, false)
-  writeInt32LE:  _makeBufferWrite(4, Buffer::writeInt32LE, false)
-  writeFloatBE:  _makeBufferWrite(4, Buffer::writeFloatBE, false)
-  writeFloatLE:  _makeBufferWrite(4, Buffer::writeFloatLE, false)
-  writeDoubleBE: _makeBufferWrite(8, Buffer::writeDoubleBE, false)
-  writeDoubleLE: _makeBufferWrite(8, Buffer::writeDoubleLE, false)
+  writeUInt16BE: _makeBufferWrite(2, Buffer::writeUInt16BE)
+  writeUInt16LE: _makeBufferWrite(2, Buffer::writeUInt16LE)
+  writeUInt32BE: _makeBufferWrite(4, Buffer::writeUInt32BE)
+  writeUInt32LE: _makeBufferWrite(4, Buffer::writeUInt32LE)
+  writeInt8:     _makeBufferWrite(1, Buffer::writeInt8)
+  writeInt16BE:  _makeBufferWrite(2, Buffer::writeInt16BE)
+  writeInt16LE:  _makeBufferWrite(2, Buffer::writeInt16LE)
+  writeInt32BE:  _makeBufferWrite(4, Buffer::writeInt32BE)
+  writeInt32LE:  _makeBufferWrite(4, Buffer::writeInt32LE)
+  writeFloatBE:  _makeBufferWrite(4, Buffer::writeFloatBE)
+  writeFloatLE:  _makeBufferWrite(4, Buffer::writeFloatLE)
+  writeDoubleBE: _makeBufferWrite(8, Buffer::writeDoubleBE)
+  writeDoubleLE: _makeBufferWrite(8, Buffer::writeDoubleLE)
 
   writeUInt16: _makeBufferWriteDefault(@::writeUInt16LE, @::writeUInt16BE)
   writeUInt32: _makeBufferWriteDefault(@::writeUInt32LE, @::writeUInt32BE)
@@ -137,6 +137,35 @@ class StreamWriterNodeBuffer extends StreamWriter
   writeInt32:  _makeBufferWriteDefault(@::writeInt32LE, @::writeInt32BE)
   writeFloat:  _makeBufferWriteDefault(@::writeFloatLE, @::writeFloatBE)
   writeDouble: _makeBufferWriteDefault(@::writeDoubleLE, @::writeDoubleBE)
+
+  # These are intended to be called with a Buffer.
+  bufferWriteUInt24BE = (value, offset) ->
+    if value < 0 or value > 0xffffff
+      throw new TypeError('value is out of bounds')
+    @writeUInt8((value&0xff0000)>>>16, offset)
+    @writeUInt16BE(value&0xffff, offset+1)
+  bufferWriteInt24BE = (value, offset) ->
+    if value < -0x800000 or value > 0x7fffff
+      throw new TypeError('value is out of bounds')
+    @writeUInt8((value&0xff0000)>>>16, offset)
+    @writeUInt16BE(value&0xffff, offset+1)
+  bufferWriteUInt24LE = (value, offset) ->
+    if value < 0 or value > 0xffffff
+      throw new TypeError('value is out of bounds')
+    @writeUInt8(value&0xff, offset)
+    @writeUInt16LE((value&0xffff00)>>>8, offset+1)
+  bufferWriteInt24LE = (value, offset) ->
+    if value < -0x800000 or value > 0x7fffff
+      throw new TypeError('value is out of bounds')
+    @writeUInt8(value&0xff, offset)
+    @writeUInt16LE((value&0xffff00)>>>8, offset+1)
+
+  writeUInt24BE: _makeBufferWrite(3, bufferWriteUInt24BE)
+  writeInt24BE:  _makeBufferWrite(3, bufferWriteInt24BE)
+  writeUInt24LE: _makeBufferWrite(3, bufferWriteUInt24LE)
+  writeInt24LE:  _makeBufferWrite(3, bufferWriteInt24LE)
+  writeUInt24:   _makeBufferWriteDefault(@::writeUInt24LE, @::writeUInt24BE)
+  writeInt24:    _makeBufferWriteDefault(@::writeInt24LE, @::writeInt24BE)
 
   # TODO
   writeInt64: () ->

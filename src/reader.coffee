@@ -683,6 +683,29 @@ class StreamReaderNodeBuffer extends StreamReader
   peekFloat:  _makeBufferReadDefault(@::peekFloatLE, @::peekFloatBE)
   peekDouble: _makeBufferReadDefault(@::peekDoubleLE, @::peekDoubleBE)
 
+  # These are intended to be called with a Buffer.
+  bufferReadUInt24BE = (offset) ->
+    return (@readUInt8(offset) << 16) | @readUInt16BE(offset+1)
+  bufferReadInt24BE = (offset) ->
+    return (@readInt8(offset) << 16) | @readUInt16BE(offset+1)
+  bufferReadUInt24LE = (offset) ->
+    return @readUInt8(offset) | (@readUInt16LE(offset+1) << 8)
+  bufferReadInt24LE = (offset) ->
+    return @readUInt8(offset) | (@readInt16LE(offset+1) << 8)
+
+  readUInt24BE: _makeBufferRead(3, bufferReadUInt24BE, false)
+  readInt24BE:  _makeBufferRead(3, bufferReadInt24BE, false)
+  readUInt24LE: _makeBufferRead(3, bufferReadUInt24LE, false)
+  readInt24LE:  _makeBufferRead(3, bufferReadInt24LE, false)
+  readUInt24: _makeBufferReadDefault(@::readUInt24LE, @::readUInt24BE)
+  readInt24:  _makeBufferReadDefault(@::readInt24LE, @::readInt24BE)
+
+  peekUInt24BE: _makeBufferRead(3, bufferReadUInt24BE, true)
+  peekInt24BE:  _makeBufferRead(3, bufferReadInt24BE, true)
+  peekUInt24LE: _makeBufferRead(3, bufferReadUInt24LE, true)
+  peekInt24LE:  _makeBufferRead(3, bufferReadInt24LE, true)
+  peekUInt24: _makeBufferReadDefault(@::peekUInt24LE, @::peekUInt24BE)
+  peekInt24:  _makeBufferReadDefault(@::peekInt24LE, @::peekInt24BE)
 
   # TODO
   readInt64: () ->

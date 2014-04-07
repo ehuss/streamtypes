@@ -38,6 +38,32 @@ describe 'StreamWriterNodeBuffer', ->
             0x7f, 0xef, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
             0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xef, 0x7f]
 
+    it 'should write 24-bit ints', ->
+      expected = [
+        # Buffer             UInt24BE  Int24BE   UInt24LE  Int24LE
+        [[0x0a, 0x0b, 0x0c], 0x0a0b0c, 0x0a0b0c, 0x0c0b0a, 0x0c0b0a],
+        [[0xff, 0xff, 0xff], 0xffffff,       -1, 0xffffff,       -1],
+        [[0x00, 0x00, 0x00],        0,        0,        0,        0],
+        [[0xff, 0x00, 0x00], 0xff0000, -0x10000,     0xff,     0xff],
+        [[0x00, 0x00, 0xff],     0xff,     0xff, 0xff0000, -0x10000],
+        [[0x80, 0x00, 0x00], 0x800000,-0x800000,     0x80,     0x80],
+        [[0x00, 0x00, 0x80],     0x80,     0x80, 0x800000,-0x800000],
+      ]
+      for [bytes, a, b, c, d] in expected
+        stream = new streamtypes.StreamWriterNodeBuffer()
+        results = []
+        stream.on('data', (chunk) -> results.push(chunk))
+        stream.writeUInt24BE(a)
+        stream.writeInt24BE(b)
+        stream.writeUInt24LE(c)
+        stream.writeInt24LE(d)
+        stream.flush()
+        expect(results.length).toBe(1)
+        for i in [0...4]
+          res = Array::slice.call(results[0], i*3, i*3+3)
+          expect(res).toEqual(bytes)
+      return
+
     it 'should write strings', ->
       flushedExpectation {}, ((w) ->
         w.writeString('hello')
