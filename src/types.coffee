@@ -266,6 +266,18 @@ basicTypes =
     sizeBits: 16
     read: (reader) -> reader.stream.readInt16LE()
     write: (writer, value) -> writer.stream.writeInt16LE(value)
+  Int24:    class Int24 extends Type
+    sizeBits: 24
+    read: (reader) -> reader.stream.readInt24()
+    write: (writer, value) -> writer.stream.writeInt24(value)
+  Int24BE:  class Int24BE extends Type
+    sizeBits: 24
+    read: (reader) -> reader.stream.readInt24BE()
+    write: (writer, value) -> writer.stream.writeInt24BE(value)
+  Int24LE:  class Int24LE extends Type
+    sizeBits: 24
+    read: (reader) -> reader.stream.readInt24LE()
+    write: (writer, value) -> writer.stream.writeInt24LE(value)
   Int32:    class Int32 extends Type
     sizeBits: 32
     read: (reader) -> reader.stream.readInt32()
@@ -306,6 +318,18 @@ basicTypes =
     sizeBits: 16
     read: (reader) -> reader.stream.readUInt16LE()
     write: (writer, value) -> writer.stream.writeUInt16LE(value)
+  UInt24:   class UInt24 extends Type
+    sizeBits: 24
+    read: (reader) -> reader.stream.readUInt24()
+    write: (writer, value) -> writer.stream.writeUInt24(value)
+  UInt24BE: class UInt24BE extends Type
+    sizeBits: 24
+    read: (reader) -> reader.stream.readUInt24BE()
+    write: (writer, value) -> writer.stream.writeUInt24BE(value)
+  UInt24LE: class UInt24LE extends Type
+    sizeBits: 24
+    read: (reader) -> reader.stream.readUInt24LE()
+    write: (writer, value) -> writer.stream.writeUInt24LE(value)
   UInt32:   class UInt32 extends Type
     sizeBits: 32
     read: (reader) -> reader.stream.readUInt32()
@@ -357,9 +381,11 @@ basicTypes =
 
 endianMap =
   Int16:    ['Int16BE', 'Int16LE']
+  Int24:    ['Int24BE', 'Int24LE']
   Int32:    ['Int32BE', 'Int32LE']
   Int64:    ['Int64BE', 'Int64LE']
   UInt16:   ['UInt16BE', 'UInt16LE']
+  UInt24:   ['UInt24BE', 'UInt24LE']
   UInt32:   ['UInt32BE', 'UInt32LE']
   UInt64:   ['UInt64BE', 'UInt64LE']
   Float:    ['FloatBE', 'FloatLE']
