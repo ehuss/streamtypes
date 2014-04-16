@@ -295,6 +295,16 @@ describe 'Types', ->
         w.write('items', ['one', 'two', 'three'])
       ), strBytesArray('one\0two\0three\0')
 
+    it 'should read fixed size elements', ->
+      types =
+        items: ['Array', 3, 'UInt8']
+      bufferPartitionTypes types, [0xa, 0xb, 0xc], (r) ->
+        expect(r.read('items')).toEqual([0xa, 0xb, 0xc])
+
+      flushedTypeExpectation1 types, ((w) ->
+        w.write('items', [4, 5, 6])
+      ), [4, 5, 6]
+
     it 'should read string length elements', ->
       types =
         rec: ['Record',
@@ -316,10 +326,10 @@ describe 'Types', ->
     it 'should fail if can\'t find nul', ->
       types =
         str3: ['String0', 3, {failAtMaxBytes: true}]
-      stream = new StreamReaderNodeBuffer(types)
+      stream = new StreamReaderNodeBuffer()
       b = new Buffer('hello')
       stream.pushBuffer(b)
-      r = new TypeReader(stream)
+      r = new TypeReader(stream, types)
       expect(->r.read('str3')).toThrow()
 
 
@@ -498,6 +508,25 @@ describe 'Types', ->
       bufferPartitionTypes types, 'Hi', (r) ->
         expect(-> r.read('swType')).toThrow()
 
+    it 'should switch on a string', ->
+      types =
+        swType: ['Switch', 'what',
+          1: ['UInt8']
+          2: ['String0', 5]
+        ]
+        thing: ['Record',
+          'what', 'UInt8',
+          'value', 'swType'
+        ]
+      bufferPartitionTypes types, [1, 42, 2, 72, 105, 0], (r) ->
+        expect(r.read('thing')).toEqual({what: 1, value: 42})
+        expect(r.read('thing')).toEqual({what: 2, value: 'Hi'})
+
+      flushedTypeExpectation1 types, ((w) ->
+        w.write('thing', {what: 1, value: 123})
+        w.write('thing', {what: 2, value: 'Bye'})
+      ), [1, 123, 2, 66, 121, 101, 0]
+
   ###########################################################################
 
   describe 'Extended record type', ->
@@ -569,13 +598,13 @@ describe 'Types', ->
 
   ###########################################################################
 
-  describe 'Skip type', ->
+  describe 'Reserved type', ->
     it 'should skip', ->
       types =
-        skipper: ['SkipBytes', 100]
+        skipper: ['Reserved', 100]
         thing: ['Record',
           'field1', 'UInt8',
-          'field2', ['SkipBytes', 1],
+          'field2', ['Reserved', 1],
           'field3', 'UInt8'
         ]
       bufferPartitionTypes types, [0x0A, 0x0B, 0x0C], (r) ->
@@ -588,6 +617,20 @@ describe 'Types', ->
           field2: undefined
           field3: 3)
       ), [1, 0, 3]
+
+    it 'should allow constant values', ->
+      types =
+        reserved1: ['Reserved', ['UInt8', 42]]
+        reserved2: ['Reserved', 4, {fill: 1}]
+      bufferPartitionTypes types, [0, 0, 0, 0, 0], (r) ->
+        expect(r.read('reserved1')).toBe(0)
+        expect(r.read('reserved2')).toBeUndefined()
+        expect(r.read('reserved2')).toBeNull()
+
+      flushedTypeExpectation types, ((w) ->
+        w.write('reserved1', undefined)
+        w.write('reserved2', undefined)
+      ), [42, 1, 1, 1, 1]
 
   ###########################################################################
 
@@ -655,3 +698,60 @@ describe 'Types', ->
             subrec:
               len: 3
           data: [42, 43, 44]
+
+  ###########################################################################
+
+  describe 'CheckForInvalid type', ->
+    it 'should check for invalid values', ->
+      types =
+        thing: ['CheckForInvalid', 'UInt8', (value, context) -> value == 42]
+        thing2: ['CheckForInvalid', 'UInt8', 21]
+
+      stream = new StreamReaderNodeBuffer()
+      b = new Buffer([42])
+      stream.pushBuffer(b)
+      r = new TypeReader(stream, types)
+      expect(->r.read('thing')).toThrow()
+
+      stream = new StreamReaderNodeBuffer()
+      b = new Buffer([41, 21])
+      stream.pushBuffer(b)
+      r = new TypeReader(stream, types)
+      expect(r.read('thing')).toBe(41)
+      expect(->r.read('thing2')).toThrow()
+
+      stream = new StreamReaderNodeBuffer()
+      b = new Buffer([41, 20])
+      stream.pushBuffer(b)
+      r = new TypeReader(stream, types)
+      expect(r.read('thing')).toBe(41)
+      expect(r.read('thing2')).toBe(20)
+
+  ###########################################################################
+
+  describe 'Transform type', ->
+    it 'should transform values', ->
+      types =
+        thing: ['Transform', 'UInt8', ((value, context) -> value*2),
+                                      ((value, context) -> value/2)]
+
+      bufferPartitionTypes types, [42], (r) ->
+        expect(r.read('thing')).toEqual(84)
+
+      flushedTypeExpectation types, ((w) ->
+        w.write('thing', 100)
+      ), [50]
+
+  ###########################################################################
+
+  describe 'Offset type', ->
+    it 'should offset values', ->
+      types =
+        thing: ['Offset', 'UInt8', 1]
+
+      bufferPartitionTypes types, [42], (r) ->
+        expect(r.read('thing')).toEqual(43)
+
+      flushedTypeExpectation types, ((w) ->
+        w.write('thing', 100)
+      ), [99]

@@ -1,14 +1,27 @@
-crcTable = []
+crc32Table = []
 for n in [0...256]
   c = n
   for k in [0...8]
     c = if c&1 then (0xedb88320 ^ (c >>> 1)) else (c >>> 1)
-  crcTable[n] = c >>> 0
+  crc32Table[n] = c >>> 0
+
+crc8Table = []
+crc8Poly = 0b100000111 # x^8 + x^2 + x^1 + x^0
+for n in [0...256]
+  c = n
+  for k in [0...8]
+    c = if c&0x80 then (c << 1) ^ crc8Poly else (c << 1)
+  crc8Table[n] = c & 0xff
+
+exports.crc8 = (buffer, crc=0) ->
+  for b in buffer
+    crc = crc8Table[crc^b]
+  return crc
 
 exports.crc32 = (buffer, crc=0) ->
   crc = ~crc
   for b in buffer
-    crc = crcTable[(crc ^ b) & 0xff] ^ (crc >>> 8)
+    crc = crc32Table[(crc ^ b) & 0xff] ^ (crc >>> 8)
   return (crc ^ 0xffffffff) >>> 0
 
 exports.adler32 = (buffer, adler=0) ->

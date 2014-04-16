@@ -1,5 +1,6 @@
 streamtypes = require('../src/index')
 global[k] = v for k, v of require('./test_util')
+Long = require('long')
 StreamReaderNodeBuffer = streamtypes.StreamReaderNodeBuffer
 
 # TODO
@@ -71,6 +72,66 @@ describe 'StreamReaderNodeBuffer', ->
         expect(r.peekInt24BE()).toBe(b)
         expect(r.peekUInt24LE()).toBe(c)
         expect(r.readInt24LE()).toBe(d)
+
+    it 'should handle 64-bit values', ->
+      r = new StreamReaderNodeBuffer()
+      expected = [
+        # UInt64BE
+        # Int64BE
+        # UInt64LE
+        # Int64LE
+        [[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08],
+          new Long(0x05060708, 0x01020304, true),
+          new Long(0x05060708, 0x01020304, false),
+          new Long(0x04030201, 0x08070605, true),
+          new Long(0x04030201, 0x08070605, false)
+        ],
+        [[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff],
+          new Long(0xffffffff, 0xffffffff, true),
+          new Long(0xffffffff, 0xffffffff, false),
+          new Long(0xffffffff, 0xffffffff, true),
+          new Long(0xffffffff, 0xffffffff, false)
+        ],
+        [[0, 0, 0, 0, 0, 0, 0, 0],
+          new Long(0, 0, true),
+          new Long(0, 0, false),
+          new Long(0, 0, true),
+          new Long(0, 0, false)
+        ],
+        [[0xff, 0, 0, 0, 0, 0, 0, 0],
+          new Long(0, 0xff000000, true),
+          new Long(0, 0xff000000, false),
+          new Long(0xff, 0, true),
+          new Long(0xff, 0, false)
+        ],
+        [[0, 0, 0, 0, 0, 0, 0, 0xff],
+          new Long(0xff, 0, true),
+          new Long(0xff, 0, false),
+          new Long(0, 0xff000000, true),
+          new Long(0, 0xff000000, false)
+        ],
+        [[0x80, 0, 0, 0, 0, 0, 0, 0],
+          new Long(0, 0x80000000, true),
+          new Long(0, 0x80000000, false),
+          new Long(0x80, 0, true),
+          new Long(0x80, 0, false)
+        ],
+        [[0, 0, 0, 0, 0, 0, 0, 0x80],
+          new Long(0x80, 0, true),
+          new Long(0x80, 0, false),
+          new Long(0, 0x80000000, true),
+          new Long(0, 0x80000000, false)
+        ],
+      ]
+      # TODO: Use custom equality in Jasmine 2.0.
+      checkEqual = (x, y) -> if x.compare(y) then throw new Error("#{x} != #{y}")
+      for [bytes, a, b, c, d] in expected
+        buf = new Buffer(bytes)
+        r.pushBuffer(buf)
+        checkEqual(r.peekUInt64BE(), a)
+        checkEqual(r.peekInt64BE(),  b)
+        checkEqual(r.peekUInt64LE(), c)
+        checkEqual(r.readInt64LE(),  d)
 
     it 'should read a Node buffer', ->
       r = new StreamReaderNodeBuffer()
@@ -162,17 +223,26 @@ describe 'StreamReaderNodeBuffer', ->
         expect(r.readBits(1)).toBeNull()
       ), {bitStyle: 'least'}
 
+    it 'should handle large 53-bit values', ->
+      mostLeastPartition [0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0b11111101],
+        [0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0b10111111], (r) ->
+          expect(-> r.readBits(54)).toThrow()
+          expect(r.readBits(53)).toBe(9007199254740991)
+          expect(r.availableBits()).toBe(3)
+          expect(r.readBits(4)).toBeNull()
+          expect(r.readBits(3)).toBe(0b101)
+
     it 'should handle unsigned 32-bits', ->
       mostLeastPartition [0b11111111, 0b11111111, 0b11111111, 0b11111111],
-      [0b11111111, 0b11111111, 0b11111111, 0b11111111], (r) ->
-        expect(r.peekBits(32)).toBe(0xffffffff)
-        expect(r.peekBits(1)).toBe(1)
+        [0b11111111, 0b11111111, 0b11111111, 0b11111111], (r) ->
+          expect(r.peekBits(32)).toBe(0xffffffff)
+          expect(r.peekBits(1)).toBe(1)
 
       mostLeastPartition [0, 0, 0, 1, 0xff, 0xff, 0xff, 0xff],
-      [0, 0, 0, 0b10000000, 0xff, 0xff, 0xff, 0xff], (r) ->
-        expect(r.readBits(31)).toBe(0)
-        expect(r.peekBits(32)).toBe(0b11111111111111111111111111111111)
-        expect(r.peekBits(1)).toBe(1)
+        [0, 0, 0, 0b10000000, 0xff, 0xff, 0xff, 0xff], (r) ->
+          expect(r.readBits(31)).toBe(0)
+          expect(r.peekBits(32)).toBe(0xffffffff)
+          expect(r.peekBits(1)).toBe(1)
 
     it 'most should read 4 bytes at a time', ->
       bufferPartition [0b11111111, 0b10000000, 0b10101010, 0b01010101], (r) ->

@@ -95,6 +95,7 @@ exports.bufferPartition = bufferPartition = (bytes, f, options = {}) ->
     f(stream)
   return
 
+# Test both the "most" and "least" bit reading styles.
 exports.mostLeastPartition = (mostBytes, leastBytes, f) ->
   bufferPartition(mostBytes, f)
   bufferPartition(leastBytes, f, {bitStyle: 'least'})

@@ -73,7 +73,7 @@ types =
     'devmajor', ['Octal', 8],
     'devminor', ['Octal', 8],
     'prefix',   ['String', 155],
-    'pad',      ['SkipBytes', 12]
+    'pad',      ['Reserved', 12]
   ]
 
   GNUtarHeader: ['Record',
@@ -84,16 +84,16 @@ types =
     'devminor', ['Octal', 8],
     'atime',    ['Octal', 12],
     'ctime',    ['Octal', 12],
-    'offset',   ['SkipBytes', 12],
-    'longnames', ['SkipBytes', 4],
-    'unused',   ['SkipBytes', 1],
+    'offset',   ['Reserved', 12],
+    'longnames', ['Reserved', 4],
+    'unused',   ['Reserved', 1],
     'sparse',   ['Array', 4, ['Record',
                   'offset', ['Octal', 12],
                   'numbytes', ['Octal', 12]
                 ]],
     'isextended', 'UInt8',
     'realsize', ['DecNum', 12],
-    'padding', ['SkipBytes', 17]
+    'padding', ['Reserved', 17]
   ]
 
 

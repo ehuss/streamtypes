@@ -7,7 +7,9 @@
     "email": "eric@huss.org"
   },
   "private": true,
-  "dependencies": {},
+  "dependencies": {
+    "long": "~1.1.2"
+  },
   "devDependencies": {
     "coffee-script": "~1.7.1",
     "coffeeify": "~0.6.0",

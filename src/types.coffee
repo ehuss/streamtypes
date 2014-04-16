@@ -4,12 +4,20 @@
 
 util = require('./util')
 
+TypeError = (@message) ->
+  @name = 'TypeError'
+  @stack = (new Error()).stack
+  return
+TypeError.prototype = new Error()
+TypeError.prototype.name = TypeError.name
+TypeError.constructor = TypeError
+
 ConstError = (@value, @expectedValue) ->
   @name = 'ConstError'
   @message = "Value #{@value} does not match expected value #{@expectedValue}"
   @stack = (new Error()).stack
   return
-ConstError.prototype = new Error()
+ConstError.prototype = new TypeError()
 ConstError.prototype.name = ConstError.name
 ConstError.constructor = ConstError
 
@@ -215,10 +223,13 @@ class TypeBase
     newContext = new Context(currentContext, newObj)
     f(newContext)
 
+  sizeof: (typeName) ->
+    return @types.sizeof(typeName)
+
 
 class TypeReader extends TypeBase
 
-  read: (typeName, context = undefined) ->
+  read: (typeName, context) ->
     if context != undefined and not (context instanceof Context)
       context = new Context(null, context)
     typeName = @types._fixTypeName(typeName)
@@ -227,7 +238,7 @@ class TypeReader extends TypeBase
       throw new Error("Type #{typeName} not defined.")
     return type.read(this, context)
 
-  peek: (typeName, context = undefined) ->
+  peek: (typeName, context) ->
     typeName = @types._fixTypeName(typeName)
     @stream.saveState()
     try
@@ -237,7 +248,7 @@ class TypeReader extends TypeBase
 
 class TypeWriter extends TypeBase
 
-  write: (typeName, value, context = undefined) ->
+  write: (typeName, value, context) ->
     if context != undefined and not context instanceof Context
       context = new Context(null, context)
     typeName = @types._fixTypeName(typeName)
@@ -548,7 +559,7 @@ constructorTypes =
     _read_number: (reader, context) ->
       if @sizeBits
         # Minor optimization, probably not necessary.
-        if @reader.stream.availableBits() >= @sizeBits
+        if reader.stream.availableBits() >= @sizeBits
           return (@type.read(reader, context) for n in [0...@length])
         else
           return null
@@ -654,7 +665,12 @@ constructorTypes =
       return
 
   Switch: class SwitchType extends Type
-    constructor: (@switchCb, @caseDecls) ->
+    constructor: (switchCb, @caseDecls, options = {}) ->
+      if typeof switchCb == 'string'
+        @switchCb = (reader, context) -> context.getValue(switchCb)
+      else
+        @switchCb = switchCb
+      @ignoreMissing = options.ignoreMissing ? false
     resolveTypes: (types) ->
       @caseTypes = {}
       for caseName, caseDecl of @caseDecls
@@ -667,7 +683,10 @@ constructorTypes =
         return undefined
       t = @caseTypes[which]
       if t == undefined
-        throw new Error("Case for switch on `#{which}` not found.")
+        if @ignoreMissing
+          return undefined
+        else
+          throw new Error("Case for switch on `#{which}` not found.")
       return t.read(reader, context)
     write: (writer, value, context) ->
       which = @switchCb(null, context)
@@ -675,7 +694,10 @@ constructorTypes =
         return
       t = @caseTypes[which]
       if t == undefined
-        throw new Error("Case for switch on `#{which}` not found.")
+        if @ignoreMissing
+          return
+        else
+          throw new Error("Case for switch on `#{which}` not found.")
       return t.write(writer, value, context)
 
 
@@ -693,19 +715,38 @@ constructorTypes =
     write: (writer, value, context) ->
       throw new Error('Peek type is only used for readers.')
 
-  SkipBytes: class SkipBytesType extends Type
-    constructor: (@numBytes, @fill=0) ->
+  Reserved: class ReservedType extends Type
+    constructor: (numBytesOrConst, options = {}) ->
+      if numBytesOrConst instanceof Array
+        @constDecl = numBytesOrConst[0]
+        @defaultValue = numBytesOrConst[1]
+      else
+        @numBytes = numBytesOrConst
+        @fill = options.fill ? 0
+    resolveTypes: (types) ->
+      if @constDecl
+        @constType = types.toType(@constDecl)
     read: (reader, context) ->
-      num = @getLength(reader, context, @numBytes)
-      if reader.stream.availableBytes() < num
-        return null
-      reader.stream.skipBytes(num)
-      return undefined
+      if @numBytes
+        num = @getLength(reader, context, @numBytes)
+        if reader.stream.availableBytes() < num
+          return null
+        reader.stream.skipBytes(num)
+        return undefined
+      else
+        return @constType.read(reader, context)
     write: (writer, value, context) ->
-      num = @getLength(null, context, @numBytes)
-      buf = new Buffer(num)
-      buf.fill(0)
-      return writer.stream.writeBuffer(buf)
+      if @numBytes
+        num = @getLength(null, context, @numBytes)
+        buf = new Buffer(num)
+        buf.fill(@fill)
+        return writer.stream.writeBuffer(buf)
+      else
+        if typeof @defaultValue == 'function'
+          value = @defaultValue(context)
+        else
+          value = @defaultValue
+        return @constType.write(writer, value, context)
 
   Flags: class FlagsType extends Type
     constructor: (@dataTypeDecl, @flagNames...) ->
@@ -736,14 +777,6 @@ constructorTypes =
       @dataType.write(writer, result, context)
       return
 
-  # TODO
-  # Map: class MapType extends Type
-  #   constructor: (@dataTypeDecl, @typeMap) ->
-  #   resolveTypes: (types) ->
-  #     @dataType = types.toType(@dataTypeDecl)
-  #     return
-  #   read: (reader, context) ->
-
   If: class IfType extends Type
     constructor: (conditional, @trueTypeDecl, @falseTypeDecl) ->
       if typeof conditional == 'string'
@@ -770,9 +803,55 @@ constructorTypes =
           return @falseType.write(writer, value, context)
       return
 
+  CheckForInvalid: class CheckForInvalidType extends Type
+    constructor: (@typeDecl, test) ->
+      if typeof test == 'function'
+        @test = test
+      else
+        @test = (value, context) -> value == test
+    resolveTypes: (types) ->
+      @type = types.toType(@typeDecl)
+    read: (reader, context) ->
+      value = @type.read(reader, context)
+      if value == null
+        return null
+      if @test(value, context)
+        throw new TypeError("Invalid value #{value}")
+      return value
+    write: (writer, value, context) ->
+      if @test(value, context)
+        throw new TypeError("Invalid value #{value}")
+      return @type.write(writer, value, context)
+
+  Transform: class TransformType extends Type
+    constructor: (@typeDecl, @transRead, @transWrite) ->
+    resolveTypes: (types) ->
+      @type = types.toType(@typeDecl)
+    read: (reader, context) ->
+      value = @type.read(reader, context)
+      if value == null
+        return null
+      return @transRead(value, context)
+    write: (writer, value, context) ->
+      @type.write(writer, @transWrite(value, context), context)
+
+  # A special case of Transform for the simple case of adding/subtracting a
+  # number.
+  Offset: class OffsetType extends Type
+    constructor: (@typeDecl, @offset) ->
+    resolveTypes: (types) ->
+      @type = types.toType(@typeDecl)
+    read: (reader, context) ->
+      value = @type.read(reader, context)
+      if value == null
+        return null
+      return value+@offset
+    write: (writer, value, context) ->
+      @type.write(writer, value-@offset, context)
 
 exports.Types = Types
 exports.Type = Type
+exports.TypeError = TypeError
 exports.ConstError = ConstError
 exports.Context = Context
 exports.TypeReader = TypeReader

@@ -1,0 +1,3 @@
+- http://codebase.es/riffwave/
+  Plays WAVE (PCM in RIFF) in the browser!  It encodes a WAVE as base64 Data URI, then sets the src of the <audio> element.
+

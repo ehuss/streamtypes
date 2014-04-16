@@ -15,6 +15,8 @@ Tests:
 node --debug-brk H:\Proj\streamtypes\node_modules\jasmine-node\lib\jasmine-node\cli.js --captureExceptions --coffee .\spec\typed_spec.coffee
 jasmine-node --captureExceptions --watch src --autotest --coffee spec
 
+http://htmlpreview.github.io/?http://github.com/dcodeIO/Long.js/master/docs/Long.html
+
 Compression
 ===========
 https://code.google.com/p/bitjs/source/browse/unzip.js
