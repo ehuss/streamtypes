@@ -1,26 +1,62 @@
 # Supporting multiple types of bit writers:
-# - How to flush?  Could keep track of the last bit write type.  If type changes, do a flush of the last type.
-# - Hmm....don't want to flush with deflate, since huffman=most, header=least, and they are intermixed within bytes.
+# - How to flush?  Could keep track of the last bit write type.  If type
+#   changes, do a flush of the last type.
+# - Hmm....don't want to flush with deflate, since huffman=most, header=least,
+#   and they are intermixed within bytes.
 #   - Research how zlib implements this.
 # Alternatives:
-# - I like the idea of keeping things extensible.  But making the reader extensible would be very challenging.
-#   - Needs to be able to _advancePosition when each 8 bits of the buffer are consumed.  skipBytes can't be used (due to alignment call).
+# - I like the idea of keeping things extensible.  But making the reader
+#   extensible would be very challenging.
+#   - Needs to be able to _advancePosition when each 8 bits of the buffer are
+#     consumed.  skipBytes can't be used (due to alignment call).
 #
 # - Maybe reading bits should always be bytewise?  Is reading 32 bits really more efficient?
 #
 #
 
+events = require('events')
+SEEK = require('./common').SEEK
 
+# XXX
+#
+# XXX
+# Emits the following events:
+# - 'data': A Buffer of data being output.
+# - 'end': No more data coming.
+# - 'drain': It is OK to start writing again.
+#
+# destination can be:
+# - Node Writable stream.
+# - Node PassThrough stream.
+# - null.  You can register for events to receive.
+# - NodeFileStream
+# - IOMemory
+#
+# Minimum things needed from destination:
+# REQUIRED:
+# - write(buffer).  Should return true if data completely handled.
+#   If it returns false, destination must be an EventEmitter that will emit a
+#   'drain' event once it is appropriate to write more data.
+# OPTIONAL:
+# - end().  Indicates that no more data will be written.
+#   If destination is an EventEmitter, it must emit a 'finish' event once
+#   everything is flushed.
+# - seek(offset, origin). Return the new position.
+# - getPosition().  Return the current position.
+class StreamWriter extends events.EventEmitter
 
-EventEmitter = require('events').EventEmitter
+  _currentBuffer: null
+  _currentBufferPos: 0
+  _bytesWritten: 0
+  _availableBytes: 0
+  _bitBuffer: 0
+  _bitsInBB: 0
+  _destOK: true
 
-class StreamWriter extends EventEmitter
-
-
-class StreamWriterNodeBuffer extends StreamWriter
-  constructor: (options = {}) ->
+  constructor: (@destination, options = {}) ->
+    super()
     @littleEndian = options.littleEndian ? false
-    @bufferSize = Math.max(options.bufferSize ? 32768, 8)
+    @bufferSize = Math.max(options.bufferSize ? 65536, 8)
     bitStyle = options.bitStyle ? 'most'
     switch bitStyle
       when 'most'
@@ -35,24 +71,55 @@ class StreamWriterNodeBuffer extends StreamWriter
       else
         throw new Error("Unknown bit style #{bitStyle}")
     # TODO:
-    # - Comment on what the invariants are (buffer==null then pos==0,  buffer!=null, then availableBytes > 0, etc.)
-    @_currentBuffer = null
-    @_currentBufferPos = 0
-    @_availableBytes = 0
-    @_bitBuffer = 0
-    @_bitsInBB = 0
-    @_bytesWritten = 0
+    # - Comment on what the invariants are (buffer==null then pos==0,  buffer!=null, then availableBytes > 0, at least 1 byte used, etc.)
+    if @destination?.seek
+      @_seek = @_seekDest
+      @_getPosition = @_getPositionDest
 
-  tell: ->
+  getPosition: ->
     return @_bytesWritten
+
+  _getPositionDest: ->
+    return @destination.getPosition()
+
+  seek: (offset, origin = SEEK.BEGIN) ->
+    throw new Error("Seeking not supported for this destination type.")
+
+  _seekDest: (offset, origin = SEEK.BEGIN) ->
+    @flush()
+    return @destination.seek(offset, origin)
 
   flush: ->
     if @_currentBuffer
       part = @_currentBuffer.slice(0, @_currentBufferPos)
-      @emit('data', part)
       @_currentBuffer = null
       @_currentBufferPos = 0
       @_availableBytes = 0
+      @_write(part)
+    return @_destOK
+
+  end: ->
+    @flush()
+    if @destination and @destination.end
+      if @destination.on
+        @destination.on('finish', => @emit('end'))
+      @destination.end()
+      if @destination.on
+        # Wait for destination to finish before emitting end.
+        return
+    @emit('end')
+    return
+
+  _write: (buffer) ->
+    @emit('data', buffer)
+    if @destination
+      if not @destination.write(buffer)
+        if @_destOK
+          @_destOK = false
+          onDrain = =>
+            @_destOK = true
+            @emit('drain')
+          @destination.once('drain', onDrain)
     return
 
   # Advances the position of the current buffer.
@@ -61,38 +128,39 @@ class StreamWriterNodeBuffer extends StreamWriter
     @_availableBytes -= numBytes
     @_bytesWritten += numBytes
     if not @_availableBytes
-      @emit('data', @_currentBuffer)
+      @_write(@_currentBuffer)
       @_currentBuffer = null
       @_currentBufferPos = 0
     return
+
   # Write bytes.
   #
-  # @param buffer {Buffer} The buffer to write.
+  # @#param buffer {Buffer} The buffer to write.
   writeBuffer: (buffer) ->
     if @_currentBuffer == null
-      @emit('data', buffer)
+      @_write(buffer)
       @_bytesWritten += buffer.length
     else
       if @_availableBytes < buffer.length
         # Emit what's in the buffer.
         @flush()
-        @emit('data', buffer)
+        @_write(buffer)
         @_bytesWritten += buffer.length
       else
         # Data in the buffer, and there's enough room.
         buffer.copy(@_currentBuffer, @_currentBufferPos)
         @_advancePosition(buffer.length)
-    return
+    return @_destOK
 
   writeString: (str, encoding='utf8') ->
     buffer = new Buffer(str, encoding)
     @writeBuffer(buffer)
-    return
+    return @_destOK
 
-  writeBytes: (array) ->
+  writeArray: (array) ->
     buffer = new Buffer(array)
     @writeBuffer(buffer)
-    return
+    return @_destOK
 
   ###########################################################################
   # Basic types.
@@ -107,7 +175,7 @@ class StreamWriterNodeBuffer extends StreamWriter
         @_availableBytes = @bufferSize
       bufferFunc.call(@_currentBuffer, value, @_currentBufferPos)
       @_advancePosition(numBytes)
-      return
+      return @_destOK
 
   _makeBufferWriteDefault = (littleEndianFunc, bigEndianFunc) ->
     return (value) ->
@@ -200,12 +268,12 @@ class StreamWriterNodeBuffer extends StreamWriter
         @writeUInt8(@_bitBuffer)
         @_bitBuffer = 0
         @_bitsInBB = 0
-    return
+    return @_destOK
 
   flushBits8: ->
     if @_bitsInBB
       @writeBits(0, (8-@_bitsInBB))
-    return
+    return @_destOK
 
   writeBitsLeast: (value, numBits) ->
     if numBits > 32
@@ -224,7 +292,7 @@ class StreamWriterNodeBuffer extends StreamWriter
         @writeUInt8(@_bitBuffer)
         @_bitBuffer = 0
         @_bitsInBB = 0
-    return
+    return @_destOK
 
   writeBitsMost16LE: (value, numBits) ->
     if numBits > 32
@@ -241,12 +309,11 @@ class StreamWriterNodeBuffer extends StreamWriter
         @writeUInt16LE(@_bitBuffer)
         @_bitBuffer = 0
         @_bitsInBB = 0
-    return
+    return @_destOK
 
   flushBits16LE: ->
     if @_bitsInBB
       @writeBits(0, (16-@_bitsInBB))
-    return
+    return @_destOK
 
-
-exports.StreamWriterNodeBuffer = StreamWriterNodeBuffer
+exports.StreamWriter = StreamWriter

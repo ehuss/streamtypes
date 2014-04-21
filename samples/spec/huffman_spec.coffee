@@ -21,7 +21,7 @@ describe 'Huffman', ->
       # Reverse the bytes.
       # 01 110 010, 0 011 101 0, 0b111 0111 0, 0b0000000 1
       b = new Buffer([0b01110010, 0b00111010, 0b11101110, 0b00000001, 0, 0])
-      inputStream = new streamtypes.StreamReaderNodeBuffer({bitStyle: 'least'})
-      inputStream.pushBuffer(b)
+      source = new streamtypes.IOMemory(b)
+      inputStream = new streamtypes.StreamReader(source, {bitStyle: 'least'})
       results = (h.readSymbol(inputStream) for i in [0..7])
       expect(results).toEqual([0, 1, 2, 3, 4, 5, 6, 7])

@@ -1,10 +1,11 @@
 # TODO
 # - write(type)
 
+stream = require('stream')
 streamtypes = require('../src/index')
 global[k] = v for k, v of require('./test_util')
 
-describe 'StreamWriterNodeBuffer', ->
+describe 'StreamWriter', ->
   describe 'Basic writes', ->
 
     it 'should write basic types', ->
@@ -50,14 +51,14 @@ describe 'StreamWriterNodeBuffer', ->
         [[0x00, 0x00, 0x80],     0x80,     0x80, 0x800000,-0x800000],
       ]
       for [bytes, a, b, c, d] in expected
-        stream = new streamtypes.StreamWriterNodeBuffer()
+        w = new streamtypes.StreamWriter()
         results = []
-        stream.on('data', (chunk) -> results.push(chunk))
-        stream.writeUInt24BE(a)
-        stream.writeInt24BE(b)
-        stream.writeUInt24LE(c)
-        stream.writeInt24LE(d)
-        stream.flush()
+        w.on('data', (chunk) -> results.push(chunk))
+        w.writeUInt24BE(a)
+        w.writeInt24BE(b)
+        w.writeUInt24LE(c)
+        w.writeInt24LE(d)
+        w.flush()
         expect(results.length).toBe(1)
         for i in [0...4]
           res = Array::slice.call(results[0], i*3, i*3+3)
@@ -75,7 +76,7 @@ describe 'StreamWriterNodeBuffer', ->
 
     it 'should write bytes', ->
       flushedExpectation {}, ((w) ->
-        w.writeBytes([1, 2, 3, 4, 5])
+        w.writeArray([1, 2, 3, 4, 5])
         ), [1, 2, 3, 4, 5]
 
   describe 'Bit writing', ->
@@ -144,18 +145,50 @@ describe 'StreamWriterNodeBuffer', ->
     it 'should handle buffersize option', ->
       flushedExpectations {bufferSize: 8}, ((w) ->
         w.writeBuffer(Buffer([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]))
-        expect(w.tell()).toBe(10)
+        expect(w.getPosition()).toBe(10)
         w.writeBuffer(Buffer([0, 1, 2, 3, 4, 5]))
-        expect(w.tell()).toBe(16)
+        expect(w.getPosition()).toBe(16)
         w.writeUInt16BE(0x0708)
-        expect(w.tell()).toBe(18)
+        expect(w.getPosition()).toBe(18)
         w.writeBuffer(Buffer([9, 0xa, 0xb, 0xc, 0xd, 0xe]))
-        expect(w.tell()).toBe(24)
+        expect(w.getPosition()).toBe(24)
         ), [
         [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
         [0, 1, 2, 3, 4, 5],
         [7, 8, 9, 0xa, 0xb, 0xc, 0xd, 0xe]
       ]
 
+  describe 'events', ->
+    it 'should emit end', ->
+      w = new streamtypes.StreamWriter()
+      gotEnd = false
+      w.on('end', -> gotEnd = true)
+      expect(gotEnd).toBeFalsy()
+      w.end()
+      expect(gotEnd).toBeTruthy()
 
+      output = new stream.PassThrough()
+      w = new streamtypes.StreamWriter(output)
+      gotEnd = false
+      w.on('end', -> gotEnd = true)
+      expect(gotEnd).toBeFalsy()
+      w.end()
+      expect(gotEnd).toBeTruthy()
 
+    it 'should emit drain', ->
+      class CantankerousWriter extends stream.Writable
+        stuffCb: null
+        doStuff: ->
+          @stuffCb()
+        _write: (chunk, encoding, callback) ->
+          @stuffCb = callback
+
+      output = new CantankerousWriter()
+      w = new streamtypes.StreamWriter(output)
+      gotDrain = false
+      w.on('drain', -> gotDrain = true)
+      # The default high water mark is 16k.
+      w.writeBuffer(Buffer(17000))
+      expect(gotDrain).toBeFalsy()
+      output.doStuff()
+      expect(gotDrain).toBeTruthy()

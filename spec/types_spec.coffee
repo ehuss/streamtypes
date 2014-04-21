@@ -1,6 +1,6 @@
 streamtypes = require('../src/index')
 global[k] = v for k, v of require('./test_util')
-StreamReaderNodeBuffer = streamtypes.StreamReaderNodeBuffer
+StreamReader = streamtypes.StreamReader
 TypeReader = streamtypes.TypeReader
 TypeWriter = streamtypes.TypeWriter
 
@@ -141,10 +141,10 @@ describe 'Types', ->
 
   ###########################################################################
 
-  describe 'Bytes type', ->
+  describe 'Array Bytes type', ->
     it 'should read/write bytes', ->
       types =
-        bytes4: ['Bytes', 4]
+        bytes4: ['ArrayBytes', 4]
       bufferPartitionTypes types, [0x0A, 0x0B, 0x0C, 0x0D], (r) ->
         expect(r.peek('bytes4')).toEqual([0x0A, 0x0B, 0x0C, 0x0D])
 
@@ -154,7 +154,7 @@ describe 'Types', ->
 
     it 'should read bytes with function length', ->
       types =
-        bytesF: ['Bytes', (reader, context)->context.getValue('len')]
+        bytesF: ['ArrayBytes', (reader, context)->context.getValue('len')]
         sampleRec: ['Record',
           'len', 'UInt8',
           'data', 'bytesF',
@@ -164,7 +164,7 @@ describe 'Types', ->
 
     it 'should read bytes with string length', ->
       types =
-        bytesF: ['Bytes', 'len']
+        bytesF: ['ArrayBytes', 'len']
         sampleRec: ['Record',
           'len', 'UInt8',
           'data', 'bytesF',
@@ -227,8 +227,7 @@ describe 'Types', ->
       # Test out-of-buffer reset.
       bufferPartitionTypes types, [0x0A], (r) ->
         expect(r.read('SampleRec1')).toBeNull()
-        expect(r.stream.tell()).toBe(0)
-        expect(r.stream.availableBytes()).toBe(1)
+        expect(r.stream.getPosition()).toBe(0)
 
       flushedTypeExpectation types, ((w) ->
         w.write('SampleRec1',
@@ -242,7 +241,7 @@ describe 'Types', ->
   describe 'Const type', ->
     it 'should read/write const', ->
       types =
-        magic: ['Const', ['Bytes', 4], [0x0A, 0x0B, 0x0C, 0x0D]]
+        magic: ['Const', ['ArrayBytes', 4], [0x0A, 0x0B, 0x0C, 0x0D]]
       bufferPartitionTypes types, [0x0A, 0x0B, 0x0C, 0x0D], (r) ->
         expect(r.read('magic')).toEqual([0x0A, 0x0B, 0x0C, 0x0D])
 
@@ -253,7 +252,7 @@ describe 'Types', ->
 
     it 'should throw ConstError on mismatch', ->
       types =
-        magic: ['Const', ['Bytes', 4], [0x0A, 0x0B, 0x0C, 0x0D]]
+        magic: ['Const', ['ArrayBytes', 4], [0x0A, 0x0B, 0x0C, 0x0D]]
       bufferPartitionTypes types, [0x0A, 0x0B, 0x0C, 0x0E], (r) ->
         caught = false
         try
@@ -275,7 +274,7 @@ describe 'Types', ->
           expect(value).toEqual([0x0A, 0x0B, 0x0C, 0x0D])
           return 'balli'
       types =
-        magic: ['Const', ['Bytes', 4], cb]
+        magic: ['Const', ['ArrayBytes', 4], cb]
       bufferPartitionTypes types, [0x0A, 0x0B, 0x0C, 0x0D], (r) ->
         expect(r.read('magic')).toBe('balli')
 
@@ -326,9 +325,8 @@ describe 'Types', ->
     it 'should fail if can\'t find nul', ->
       types =
         str3: ['String0', 3, {failAtMaxBytes: true}]
-      stream = new StreamReaderNodeBuffer()
-      b = new Buffer('hello')
-      stream.pushBuffer(b)
+      source = new streamtypes.IOMemory(Buffer('hello'))
+      stream = new StreamReader(source)
       r = new TypeReader(stream, types)
       expect(->r.read('str3')).toThrow()
 
@@ -344,7 +342,6 @@ describe 'Types', ->
         expect(r.read('myString')).toBe('hello')
         expect(r.read('myString')).toBeNull()
         expect(r.read('string5')).toBe('there')
-        expect(r.stream.availableBytes()).toBe(0)
 
       flushedTypeExpectation1 types, ((w) ->
         w.write('myString', 'hello')
@@ -374,7 +371,6 @@ describe 'Types', ->
       bufferPartitionTypes types, 'foo\0\0', (r) ->
         expect(r.read('myString')).toBe('foo')
         expect(r.read('myString')).toBeNull()
-        expect(r.stream.availableBytes()).toBe(0)
 
       flushedTypeExpectation1 types, ((w) ->
         w.write('myString', 'foo')
@@ -589,7 +585,7 @@ describe 'Types', ->
     it 'should peek', ->
       types =
         thing: ['Record',
-          'raw', ['Peek', ['Bytes', 2]],
+          'raw', ['Peek', ['ArrayBytes', 2]],
           'field1', 'UInt8',
           'field2', 'UInt8'
         ]
@@ -707,22 +703,19 @@ describe 'Types', ->
         thing: ['CheckForInvalid', 'UInt8', (value, context) -> value == 42]
         thing2: ['CheckForInvalid', 'UInt8', 21]
 
-      stream = new StreamReaderNodeBuffer()
-      b = new Buffer([42])
-      stream.pushBuffer(b)
+      source = new streamtypes.IOMemory([42])
+      stream = new StreamReader(source)
       r = new TypeReader(stream, types)
       expect(->r.read('thing')).toThrow()
 
-      stream = new StreamReaderNodeBuffer()
-      b = new Buffer([41, 21])
-      stream.pushBuffer(b)
+      source = new streamtypes.IOMemory([41, 21])
+      stream = new StreamReader(source)
       r = new TypeReader(stream, types)
       expect(r.read('thing')).toBe(41)
       expect(->r.read('thing2')).toThrow()
 
-      stream = new StreamReaderNodeBuffer()
-      b = new Buffer([41, 20])
-      stream.pushBuffer(b)
+      source = new streamtypes.IOMemory([41, 20])
+      stream = new StreamReader(source)
       r = new TypeReader(stream, types)
       expect(r.read('thing')).toBe(41)
       expect(r.read('thing2')).toBe(20)

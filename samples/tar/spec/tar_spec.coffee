@@ -9,7 +9,7 @@ describe 'UStar', ->
       runs ->
         fsStream = fs.createReadStream('spec/ustar.tar')
         tRead = new tar.TarReader()
-        tRead.processStream(fsStream)
+        tRead.read(fsStream)
         tRead.on('newFile', (header) -> events.push(['newFile', header]))
         tRead.on('data', (data) -> events.push(['data', data]))
         tRead.on('error', (err) -> jasmine.fail(err))
@@ -102,7 +102,7 @@ describe 'Classic Tar', ->
       runs ->
         fsStream = fs.createReadStream('spec/classic-tar.tar')
         tRead = new tar.TarReader()
-        tRead.processStream(fsStream)
+        tRead.read(fsStream)
         tRead.on('newFile', (header) -> events.push(['newFile', header]))
         tRead.on('data', (data) -> events.push(['data', data]))
         tRead.on('error', (err) -> jasmine.fail(err))

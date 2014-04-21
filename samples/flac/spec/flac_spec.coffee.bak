@@ -6,8 +6,9 @@ require('eric_node')
 
 describe 'flac', ->
   it 'testing...', ->
+
     console.log('Reading wave.')
-    waveFile = fs.readFileSync('spec/sineTest.wav')
+    waveFile = fs.readFileSync('spec/enya.wav')
     waveReader = new wave.WaveReader()
     waveReader.setOutputFormat
       format: wave.FORMAT.LPCM
@@ -23,7 +24,7 @@ describe 'flac', ->
     console.log(waveInfo)
 
     console.log('Reading flac.')
-    fileData = fs.readFileSync('spec/sineTest.flac')
+    fileData = fs.readFileSync('spec/enya.flac')
     flacInfo = null
     flacBlocks = []
     flacReader = new flac.FLACReader()
@@ -48,6 +49,7 @@ describe 'flac', ->
     flacBlockNum = 0
     loop
       # Check samples for all channels.
+      # XXX: Check Wave vs Flac channel order.
       for n in [0...flacBlock.length]
         flacSample = flacBlock[n][flacIndex]
         waveSample = waveChunk[waveIndex]

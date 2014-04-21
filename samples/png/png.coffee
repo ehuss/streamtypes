@@ -18,7 +18,7 @@ crc = require('../crc')
 zlib = require('../zlib')
 
 types =
-  Signature: ['Const', ['Bytes', 8], [137, 80, 78, 71, 13, 10, 26, 10]]
+  Signature: ['Const', ['ArrayBytes', 8], [137, 80, 78, 71, 13, 10, 26, 10]]
 
   ChunkHeader: ['Record',
     'length', 'UInt32',
@@ -54,7 +54,10 @@ types =
     'keyword', ['String0', 80],
     # Unfortunately Node does not support ISO/IEC 8859-1,
     # and binary is deprecated. :(
-    'text', ['String', 0xffffffff, {encoding: 'binary', returnTruncated: true}]
+    # It is safe to use availableBytes since the entire chunk is guaranteed to
+    # be in the stream (via pushBuffer).
+    'text', ['String', ((reader) -> reader.stream.availableBytes()),
+             {encoding: 'binary'}]
   ]
 
   ChunkZText: ['Record',
@@ -507,7 +510,7 @@ class FormatInfo
 # A streaming PNG reader.
 #
 # This is an event emitter.  You start by passing a readable stream to the
-# {PNGReader#attachStream} method (or pass PNG buffers manually to
+# {PNGReader#read} method (or pass PNG buffers manually to
 # {PNGReader#processBuffer}).
 #
 # You can specify the format that you want the image data to be provided to you
@@ -548,21 +551,23 @@ class PNGReader extends events.EventEmitter
 
   _lastChunkType: undefined
 
-  constructor: (options={}) ->
-    super(options)
-    @_stream = new streamtypes.StreamReaderNodeBuffer({bitStyle: 'least'})
-    @_reader = new streamtypes.TypeReader(@_stream, types)
-    @_chunkStream = new streamtypes.StreamReaderNodeBuffer()
-    @_cReader = new streamtypes.TypeReader(@_chunkStream, types)
-    @_inflator = new zlib.Zlib(@_chunkStream)
-    @_inflatorOnData = undefined
-    @_currentState = @_sSignature
-    @_idatStream = new streamtypes.StreamReaderNodeBuffer()
+  constructor: () ->
+    super()
     @_gamma =
       displayGamma: undefined
       fileGamma: undefined
       defaultFileGamma: GAMMA_2_2_INV
       table: undefined
+
+  _initStream: (source) ->
+    @_stream = new streamtypes.StreamReader(source, {bitStyle: 'least'})
+    @_reader = new streamtypes.TypeReader(@_stream, types)
+    @_chunkStream = new streamtypes.StreamReader()
+    @_cReader = new streamtypes.TypeReader(@_chunkStream, types)
+    @_inflator = new zlib.Zlib(@_chunkStream)
+    @_inflatorOnData = undefined
+    @_currentState = @_sSignature
+    @_idatStream = new streamtypes.StreamReader()
 
   _newInflator: (onData) ->
     # If any other chunks used the inflater, clean up.
@@ -571,17 +576,16 @@ class PNGReader extends events.EventEmitter
     @_inflatorOnData = onData
     @_inflator.on('data', @_inflatorOnData)
 
-  attachStream: (readableStream) ->
-    onData = (chunk) => @processBuffer(chunk)
-    onEnd = => @_processEnd()
-    readableStream.on('data', onData)
-    readableStream.on('end', onEnd)
-    @on 'end', =>
-      readableStream.removeListener('data', onData)
-      readableStream.removeListener('end', onEnd)
+  read: (readableStream) ->
+    @_initStream(readableStream)
+    @_stream.on('end', => @_processEnd())
+    @_stream.on('readable', => @_runStates())
     return
 
   processBuffer: (chunk) ->
+    if not @_stream
+      @_initStream(null)
+
     @_stream.pushBuffer(chunk)
     @_runStates()
     return
@@ -612,15 +616,11 @@ class PNGReader extends events.EventEmitter
     return @_sChunkData
 
   _sChunkData: ->
+    # +4 for crc
+    if not @_stream.ensureBytes(@_chunkHeader.length+4)
+      return
     @_chunkData = @_stream.readBuffer(@_chunkHeader.length)
-    if @_chunkData == null
-      return
-    return @_sChunkCRC
-
-  _sChunkCRC: ->
     chunkCRC = @_stream.readUInt32()
-    if chunkCRC == null
-      return
     check = crc.crc32(Buffer(@_chunkHeader.type), 0)
     check = crc.crc32(@_chunkData, check)
     if check != chunkCRC
@@ -843,7 +843,7 @@ class PNGReader extends events.EventEmitter
 
     # Process scan lines.
     loop
-      if @_idatStream.availableBytes() < (1 + @_inputInfo.lineBytes)
+      if not @_idatStream.ensureBytes(1 + @_inputInfo.lineBytes)
         return
       filterType = @_idatStream.readUInt8()
       line = @_idatStream.readBuffer(@_inputInfo.lineBytes)

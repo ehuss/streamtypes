@@ -42,28 +42,28 @@ describe 'gunzip', ->
       expect(events[2][0]).toBe('finish')
 
 
-  it 'should read fixed huffman blocks', ->
+  xit 'should read fixed huffman blocks', ->
     testGUnzip this, 'spec/fixed.gz', (events) ->
       expect(events[1][0]).toBe('data')
       expect(events[1][1].toString()).toBe('hello')
       expect(events[2][0]).toBe('finish')
 
 
-  it 'should read dynamic huffman blocks', ->
+  xit 'should read dynamic huffman blocks', ->
     testGUnzip this, 'spec/alice29.txt.gz', (events) ->
       original = fs.readFileSync('spec/alice29.txt')
       chunks = (e[1] for e in events when e[0] == 'data')
       decompressed = Buffer.concat(chunks)
       expect(decompressed.toString()).toBe(original.toString())
 
-  it 'should handle concatenated files', ->
+  xit 'should handle concatenated files', ->
     testGUnzip this, 'spec/aconcat.gz', (events) ->
       original = fs.readFileSync('spec/alice29.txt')
       chunks = (e[1] for e in events when e[0] == 'data')
       decompressed = Buffer.concat(chunks)
       expect(decompressed.toString()).toBe(original.toString())
 
-  it 'should handle all extra header fields', ->
+  xit 'should handle all extra header fields', ->
     testGUnzip this, 'spec/headers.gz', (events) ->
       chunks = (e[1] for e in events when e[0] == 'data')
       decompressed = Buffer.concat(chunks)

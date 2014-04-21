@@ -1,26 +1,27 @@
+stream = require('stream')
 streamtypes = require('../src/index')
 global[k] = v for k, v of require('./test_util')
 Long = require('long')
-StreamReaderNodeBuffer = streamtypes.StreamReaderNodeBuffer
+StreamReader = streamtypes.StreamReader
+IOMemory = streamtypes.IOMemory
 
 # TODO
 # - partition more methods.
 # - bitreader option (least, most16le)
 
 
-describe 'StreamReaderNodeBuffer', ->
+describe 'StreamReader', ->
   describe 'Basic reads', ->
-    it 'should handle no buffer', ->
-      r = new StreamReaderNodeBuffer()
+    it 'should handle empty source', ->
+      r = new StreamReader(new IOMemory())
       expect(r.readInt8()).toBeNull()
       expect(r.peekInt8()).toBeNull()
       expect(r.readUInt32()).toBeNull()
       expect(r.readBuffer(1)).toBeNull()
       expect(r.peekBuffer(1)).toBeNull()
-      expect(r.readBytes(1)).toBeNull()
+      expect(r.readArray(1)).toBeNull()
 
     it 'should read basic types', ->
-      r = new StreamReaderNodeBuffer()
       b = new Buffer([0xFF, 0x80,
                       0x0A, 0x0B, 0x0C, 0x0D,
                       0x80, 0x00, 0x00, 0x00,
@@ -36,7 +37,7 @@ describe 'StreamReaderNodeBuffer', ->
                       0xff, 0xff, 0x7f, 0x7f,
                       0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xef, 0x7f,
       ])
-      r.pushBuffer(b)
+      r = new StreamReader(new IOMemory(b))
       expect(r.readUInt8()).toBe(0xFF)
       expect(r.readInt8()).toBe(-0x80)
       expect(r.readUInt32BE()).toBe(0x0A0B0C0D)
@@ -54,7 +55,8 @@ describe 'StreamReaderNodeBuffer', ->
       expect(r.readInt8()).toBeNull()
 
     it 'should handle 24-bit values', ->
-      r = new StreamReaderNodeBuffer()
+      source = new stream.PassThrough()
+      r = new StreamReader(source)
       expected = [
         # Buffer             UInt24BE  Int24BE   UInt24LE  Int24LE
         [[0x0a, 0x0b, 0x0c], 0x0a0b0c, 0x0a0b0c, 0x0c0b0a, 0x0c0b0a],
@@ -66,15 +68,15 @@ describe 'StreamReaderNodeBuffer', ->
         [[0x00, 0x00, 0x80],     0x80,     0x80, 0x800000,-0x800000],
       ]
       for [bytes, a, b, c, d] in expected
-        buf = new Buffer(bytes)
-        r.pushBuffer(buf)
+        source.write(Buffer(bytes))
         expect(r.peekUInt24BE()).toBe(a)
         expect(r.peekInt24BE()).toBe(b)
         expect(r.peekUInt24LE()).toBe(c)
         expect(r.readInt24LE()).toBe(d)
 
     it 'should handle 64-bit values', ->
-      r = new StreamReaderNodeBuffer()
+      source = new stream.PassThrough()
+      r = new StreamReader(source)
       expected = [
         # UInt64BE
         # Int64BE
@@ -126,21 +128,19 @@ describe 'StreamReaderNodeBuffer', ->
       # TODO: Use custom equality in Jasmine 2.0.
       checkEqual = (x, y) -> if x.compare(y) then throw new Error("#{x} != #{y}")
       for [bytes, a, b, c, d] in expected
-        buf = new Buffer(bytes)
-        r.pushBuffer(buf)
+        source.write(Buffer(bytes))
         checkEqual(r.peekUInt64BE(), a)
         checkEqual(r.peekInt64BE(),  b)
         checkEqual(r.peekUInt64LE(), c)
         checkEqual(r.readInt64LE(),  d)
 
+
     it 'should read a Node buffer', ->
-      r = new StreamReaderNodeBuffer()
-      b1 = new Buffer([0x0A, 0x0B, 0x0C, 0x0D])
-      b2 = new Buffer([0x0E])
-      b3 = new Buffer([0x0F])
-      r.pushBuffer(b1)
-      r.pushBuffer(b2)
-      r.pushBuffer(b3)
+      source = new stream.PassThrough()
+      r = new StreamReader(source)
+      source.write Buffer([0x0A, 0x0B, 0x0C, 0x0D])
+      source.write Buffer([0x0E])
+      source.write Buffer([0x0F])
       b = r.readBuffer(4)
       expect(Array::slice.call(b)).toEqual([0x0A, 0x0B, 0x0C, 0x0D])
       b = r.readBuffer(2)
@@ -159,9 +159,8 @@ describe 'StreamReaderNodeBuffer', ->
 
   describe 'Basic peeks', ->
     it 'should peek without advancing', ->
-      r = new StreamReaderNodeBuffer()
-      b = new Buffer([0x0A, 0x0B, 0x0C, 0x0D])
-      r.pushBuffer(b)
+      source = new IOMemory([0x0A, 0x0B, 0x0C, 0x0D])
+      r = new StreamReader(source)
       expect(r.peekUInt8()).toBe(0x0A)
       expect(r.peekUInt8()).toBe(0x0A)
       expect(r.peekUInt32BE()).toBe(0x0A0B0C0D)
@@ -169,12 +168,12 @@ describe 'StreamReaderNodeBuffer', ->
 
   describe 'Options', ->
     it 'should handle littleEndian option', ->
-      r = new StreamReaderNodeBuffer({littleEndian: true})
-      b = new Buffer([0x0A, 0x0B, 0x0C, 0x0D])
-      r.pushBuffer(b)
+      source = new IOMemory([0x0A, 0x0B, 0x0C, 0x0D])
+      r = new StreamReader(source, {littleEndian: true})
       expect(r.readUInt32()).toBe(0x0D0C0B0A)
-      r = new StreamReaderNodeBuffer({littleEndian: false})
-      r.pushBuffer(b)
+      # source = new IOMemory([0x0A, 0x0B, 0x0C, 0x0D])
+      source.seek(0)
+      r = new StreamReader(source, {littleEndian: false})
       expect(r.readUInt32()).toBe(0x0A0B0C0D)
 
   ############################################################################
@@ -228,7 +227,6 @@ describe 'StreamReaderNodeBuffer', ->
         [0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0b10111111], (r) ->
           expect(-> r.readBits(54)).toThrow()
           expect(r.readBits(53)).toBe(9007199254740991)
-          expect(r.availableBits()).toBe(3)
           expect(r.readBits(4)).toBeNull()
           expect(r.readBits(3)).toBe(0b101)
 
@@ -299,8 +297,6 @@ describe 'StreamReaderNodeBuffer', ->
         expect(r.readBits(7)).toBe(0b0101010)
         expect(r.currentBitAlignment()).toBe(0)
         expect(r.readBits(1)).toBeNull()
-        expect(r.availableBytes()).toBe(0)
-        expect(r.availableBits()).toBe(0)
         expect(r.currentBitAlignment()).toBe(0)
 
       bufferPartition [0b11001010, 0b10100101, 0b00101010], ((r) ->
@@ -315,8 +311,6 @@ describe 'StreamReaderNodeBuffer', ->
         expect(r.readBits(7)).toBe(0b0010101)
         expect(r.currentBitAlignment()).toBe(0)
         expect(r.readBits(1)).toBeNull()
-        expect(r.availableBytes()).toBe(0)
-        expect(r.availableBits()).toBe(0)
         expect(r.currentBitAlignment()).toBe(0)
       ), {bitStyle: 'least'}
 
@@ -324,9 +318,8 @@ describe 'StreamReaderNodeBuffer', ->
 
   describe 'currentBitAlignment', ->
     it 'should return number of bits to read to achieve alignment', ->
-      r = new StreamReaderNodeBuffer()
-      b = new Buffer([0b10011101, 0b00100001])
-      r.pushBuffer(b)
+      source = new IOMemory([0b10011101, 0b00100001])
+      r = new StreamReader(source)
       expect(r.currentBitAlignment()).toBe(0)
       expect(r.readBits(1)).toBe(1)
       expect(r.currentBitAlignment()).toBe(7)
@@ -337,131 +330,137 @@ describe 'StreamReaderNodeBuffer', ->
 
   describe 'Positioning', ->
     it 'should seek', ->
-      r = new StreamReaderNodeBuffer()
-      b = new Buffer([0, 1, 2, 3, 4, 5, 6, 7, 8])
-      r.pushBuffer(b)
-      b = new Buffer([9, 0xa, 0xb, 0xc, 0xd, 0xe])
-      r.pushBuffer(b)
-      b = new Buffer([0xf, 0x10, 0x11])
-      r.pushBuffer(b)
+      source = new IOMemory()
+      r = new StreamReader(source)
+      source.write(Buffer([0, 1, 2, 3, 4, 5, 6, 7, 8]))
+      source.write(Buffer([9, 0xa, 0xb, 0xc, 0xd, 0xe]))
+      source.write(Buffer([0xf, 0x10, 0x11]))
+      source.seek(0)
 
-      expect(r.tell()).toBe(0)
+      expect(r.getPosition()).toBe(0)
       expect(-> r.seek(18)).toThrow()
-      expect(r.readBytes(7)).toEqual([0, 1, 2, 3, 4, 5, 6])
-      expect(r.tell()).toBe(7)
+      expect(r.readArray(7)).toEqual([0, 1, 2, 3, 4, 5, 6])
+      expect(r.getPosition()).toBe(7)
       r.seek(0)
-      expect(r.tell()).toBe(0)
-      expect(r.readBytes(2)).toEqual([0, 1])
-      expect(r.tell()).toBe(2)
+      expect(r.getPosition()).toBe(0)
+      expect(r.readArray(2)).toEqual([0, 1])
+      expect(r.getPosition()).toBe(2)
       r.seek(9)
-      expect(r.tell()).toBe(9)
-      expect(r.readBytes(1)).toEqual([9])
-      expect(r.tell()).toBe(10)
-      expect(-> r.seek(0)).toThrow()
+      expect(r.getPosition()).toBe(9)
+      expect(r.readArray(1)).toEqual([9])
+      expect(r.getPosition()).toBe(10)
+      r.seek(0)
+      expect(r.getPosition()).toBe(0)
+      expect(r.readArray(2)).toEqual([0, 1])
       r.seek(0x10)
-      expect(r.readBytes(1)).toEqual([0x10])
-
-  describe 'Slicing', ->
-    it 'should slice (simple interior)', ->
-      r = new StreamReaderNodeBuffer()
-      b = new Buffer([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
-      r.pushBuffer(b)
-      r2 = r[3...5]
-      expect(r2.tell()).toBe(0)
-      expect(r2.availableBytes()).toBe(2)
-      expect(r2.readBytes(2)).toEqual([3, 4])
-      expect(r2.tell()).toBe(2)
-
-    it 'should slice (entire thing)', ->
-      r = new StreamReaderNodeBuffer()
-      b = new Buffer([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
-      r.pushBuffer(b)
-      r2 = r[0...10]
-      expect(r2.tell()).toBe(0)
-      expect(r2.availableBytes()).toBe(10)
-      expect(r2.readBytes(2)).toEqual([0,1])
-      # End past the end.
-      r3 = r[0...100]
-      expect(r3.tell()).toBe(0)
-      expect(r3.availableBytes()).toBe(10)
-      expect(r3.readBytes(2)).toEqual([0,1])
-
-    it 'should slice (end < start)', ->
-      r = new StreamReaderNodeBuffer()
-      b = new Buffer([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
-      r.pushBuffer(b)
-      r2 = r[5...4]
-      expect(r2.tell()).toBe(0)
-      expect(r2.availableBytes()).toBe(0)
-      expect(r2.readBytes(1)).toBeNull()
-
-    it 'should slice (from offset)', ->
-      r = new StreamReaderNodeBuffer()
-      b = new Buffer([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
-      r.pushBuffer(b)
-      r.skipBytes(2)
-      expect(r.tell()).toBe(2)
-      r2 = r[3...5]
-      expect(r2.tell()).toBe(0)
-      expect(r2.availableBytes()).toBe(2)
-      expect(r2.readBytes(2)).toEqual([3, 4])
-
-    it 'should slice (across buffers)', ->
-      r = new StreamReaderNodeBuffer()
-      b = new Buffer([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
-      r.pushBuffer(b)
-      b = new Buffer([10, 11, 12, 13, 14, 15])
-      r.pushBuffer(b)
-      b = new Buffer([16, 17, 18, 19])
-      r.pushBuffer(b)
-      # Start in current, end in #2.
-      r2 = r[5...13]
-      expect(r2.tell()).toBe(0)
-      expect(r2.availableBytes()).toBe(8)
-      expect(r2.readBytes(8)).toEqual([5, 6, 7, 8, 9, 10, 11, 12])
-      # Start in current, end in #3.
-      r3 = r[5...18]
-      expect(r3.tell()).toBe(0)
-      expect(r3.availableBytes()).toBe(13)
-      expect(r3.readBytes(13)).toEqual([5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17])
-      # Start in current, end past #3.
-      r3 = r[5...30]
-      expect(r3.tell()).toBe(0)
-      expect(r3.availableBytes()).toBe(15)
-      expect(r3.readBytes(15)).toEqual([5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19])
+      expect(r.readArray(1)).toEqual([0x10])
 
   describe 'States', ->
     it 'should save and restore state', ->
-      r = new StreamReaderNodeBuffer()
-      b = new Buffer([0, 1])
-      r.pushBuffer(b)
-      b = new Buffer([2, 3])
-      r.pushBuffer(b)
+      source = new IOMemory()
+      r = new StreamReader(source)
+      source.write(Buffer([0, 1]))
+      source.write(Buffer([2, 3]))
+      source.write(Buffer([4, 5]))
+      source.seek(0)
       r.saveState()
       expect(r.readUInt8()).toBe(0)
-      expect(r.tell()).toBe(1)
+      expect(r.getPosition()).toBe(1)
       expect(r.readUInt8()).toBe(1)
       expect(r.readUInt8()).toBe(2)
-      expect(r.tell()).toBe(3)
-      b = new Buffer([4, 5])
-      r.pushBuffer(b)
+      expect(r.getPosition()).toBe(3)
       expect(r.readUInt8()).toBe(3)
+      # Trigger a new buffer to be pushed.
       expect(r.readUInt8()).toBe(4)
-      expect(r.tell()).toBe(5)
+      expect(r.getPosition()).toBe(5)
       r.restoreState()
-      expect(r.tell()).toBe(0)
+      expect(r.getPosition()).toBe(0)
       expect(r.readUInt8()).toBe(0)
 
     it 'should save and restore from empty state', ->
-      r = new StreamReaderNodeBuffer()
+      source = new IOMemory()
+      r = new StreamReader(source)
       expect(r.readUInt8()).toBeNull()
       r.saveState()
-      b = new Buffer([0, 1])
-      r.pushBuffer(b)
+      source.write(Buffer([0, 1]))
+      source.seek(0)
       expect(r.readUInt8()).toBe(0)
-      expect(r.tell()).toBe(1)
+      expect(r.getPosition()).toBe(1)
       r.restoreState()
-      expect(r.tell()).toBe(0)
+      expect(r.getPosition()).toBe(0)
       expect(r.readUInt8()).toBe(0)
 
 
+  ############################################################################
+  describe 'events', ->
+    it 'should be readable', ->
+      source = new IOMemory()
+      r = new StreamReader(source)
+      gotReadable = false
+      r.on('readable', -> gotReadable = true)
+      expect(gotReadable).toBeFalsy()
+
+      source = new IOMemory([1])
+      r = new StreamReader(source)
+      gotReadable = false
+      r.on('readable', -> gotReadable = true)
+      expect(gotReadable).toBeTruthy()
+
+      source = new stream.PassThrough()
+      r = new StreamReader(source)
+      gotReadable = false
+      r.on('readable', -> gotReadable = true)
+      expect(gotReadable).toBeFalsy()
+      source.write(Buffer([1]))
+      expect(gotReadable).toBeTruthy()
+
+      # Make sure it is instantly readable.
+      #
+      # Note that there are subtle issues with how PassThrough 'readable'
+      # works.  If you do write() before on('readable'), then you will
+      # not get the 'readable' event *unless* on() is called 1 tick
+      # after write().
+      source = new stream.PassThrough()
+      gotReadable = false
+      r = new StreamReader(source)
+      r.on('readable', -> gotReadable = true)
+      expect(gotReadable).toBeFalsy()
+      source.write(Buffer([1]))
+      expect(gotReadable).toBeTruthy()
+
+    it 'should end correctly', ->
+      source = new IOMemory()
+      r = new StreamReader(source)
+      gotEnd = false
+      r.on('end', => gotEnd = true)
+      expect(gotEnd).toBeFalsy()
+      expect(r.readUInt8()).toBeNull()
+      expect(gotEnd).toBeTruthy()
+
+      source = new stream.PassThrough()
+      r = new StreamReader(source)
+      gotEnd = false
+      r.on('end', -> gotEnd = true)
+      expect(gotEnd).toBeFalsy()
+      # PassThrough doesn't end by itself.
+      source.end()
+      expect(r.readUInt8()).toBeNull()
+      expect(gotEnd).toBeTruthy()
+
+    it 'should end after buffers are complete', ->
+      source = new stream.PassThrough()
+      r = new StreamReader(source)
+      gotEnd = false
+      r.on('end', -> gotEnd = true)
+      expect(gotEnd).toBeFalsy()
+      source.write(Buffer([1,2,3]))
+      source.end()
+      expect(gotEnd).toBeFalsy()
+      expect(r.readUInt8()).toBe(1)
+      expect(gotEnd).toBeFalsy()
+      expect(r.readUInt8()).toBe(2)
+      expect(gotEnd).toBeFalsy()
+      expect(r.readUInt8()).toBe(3)
+      expect(gotEnd).toBeFalsy()
+      expect(r.readUInt8()).toBeNull()
+      expect(gotEnd).toBeTruthy()

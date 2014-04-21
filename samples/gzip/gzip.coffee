@@ -114,7 +114,7 @@ class GUnzip extends stream.Transform
 
   constructor: (options={}) ->
     super(options)
-    @_stream = new streamtypes.StreamReaderNodeBuffer({littleEndian: true, bitStyle: 'least'})
+    @_stream = new streamtypes.StreamReader(null, {littleEndian: true, bitStyle: 'least'})
     @_reader = new streamtypes.TypeReader(@_stream, types)
     @_inflator = new inflate.Inflate(@_stream)
     @_inflator.initWindow(15) # 32k window size
@@ -135,11 +135,10 @@ class GUnzip extends stream.Transform
     @_stream.pushBuffer(chunk)
     try
       @_runStates()
-      if not @_stream.availableBits()
-        # Completely done with chunks.
-        callback()
     catch e
       callback(e)
+    # Done processing this chunk.
+    callback()
 
   _gzPushData: (chunk) ->
     @push(chunk)
@@ -148,13 +147,13 @@ class GUnzip extends stream.Transform
 
   _sHeader: ->
     @_stream.saveState()
-    pos = @_stream.tell()
+    pos = @_stream.getPosition()
     @_header = @_reader.read('Header')
     if @_header == null
       @_stream.restoreState()
       return
     if @_header.flags.headerCRC
-      headerSize = @_stream.tell() - pos
+      headerSize = @_stream.getPosition() - pos
       @_stream.restoreState()
       # -2 to discard the CRC itself.
       raw = @_stream.readBuffer(headerSize-2)

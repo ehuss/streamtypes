@@ -1,5 +1,13 @@
 # NOTES/TODO
-# - Support using string buffers.  Can node do this for us?
+# - Support other things besides Node Buffers (or UInt8Array in browserify)
+#    - Strings
+#    - CanvasPixelArray  (old browser only)
+#    - Data URI: https://developer.mozilla.org/en-US/docs/data_URIs
+#    - W3C Blob/File instance
+#    -
+#    - Does browserify use DataView if its available?
+#    - ES6: http://wiki.ecmascript.org/doku.php?id=harmony:typed_objects
+#
 # - If you see >>> 0, this is to ensure that integers are treated as unsigned.
 # - the bits methods are currently completely independent of the other methods.  This is suboptimal.  Some options:
 #    - Once unaligned, should readxxx methods read unaligned?  This would be somewhat complicated.
@@ -10,17 +18,70 @@
 #       - Force alignment?  Seems terrible.
 #    - When aligned, but multiple of 8 still in bit buffer, readxxx should clear the bit buffer.
 #    -
+# - Should we relay the 'error' event from the source?
 
+events = require('events')
 Long = require('long')
+SEEK = require('./common').SEEK
 
 MAX_BITS = 32
 
-class StreamReader
+# XXX
+#
+# XXX
+# Emits the following events:
+# - 'readable': More data is not available to read.
+# - 'end': All data is consumed, and no more will be appearing.
+#
+# Source may be:
+# - A Node Readable Stream.
+# - A Node Passthrough Stream.
+# - NodeFileStream
+# - IOMemory
+# - null - You will need to manually add data via pushBuffer.
+#
+# Minimum things needed from source:
+# REQUIRED:
+# - read().  Should return some data, if available.  Return null if no
+#   additional data is currently available.
+# OPTIONAL:
+# - seek(origin, offset).  Should return new position.
+# - If it has an `on` method, it should emit these events:
+#     - 'readable' Event - Should emit when more data is available to read.
+#     - 'end' Event - Should emit when all data is consumed and no more will
+#       ever be available.
+#
+class StreamReader extends events.EventEmitter
 
-class StreamReaderNodeBuffer extends StreamReader
+  source: null
+  options: null
+  littleEndian: false
+  bufferSize: 65536
+  # State objects contain the following:
+  # - bitBuffer
+  # - bitsInBB
+  # - availableBytes - Number of bytes available in currentBuffer and all
+  #   buffers in `buffers`.
+  # - buffers - Array of buffers following `currentBuffer`.
+  # - currentBuffer - The current buffer we are reading from.
+  # - currentBufferPos - The current offset into `currentBuffer`.
+  # - position - The overall position in the stream.
+  _state: null
+  _states: null
+  # This is used to avoid registering for 'readable' multiple times.
+  _readableListening: false
+  # This is used to track when the stream has sent 'end' event.
+  _streamEnded: false
+  # This is used so we only emit 'end' once.
+  _endEmitted: false
+  # This is used to determine if the source is a Node stream, or something
+  # else.
+  _sourceIsStream: false
 
-  constructor: (options = {}) ->
+  constructor: (@source, options = {}) ->
+    @options = options
     @littleEndian = options.littleEndian ?  false
+    @bufferSize = Math.max(options.bufferSize ? 65536, 8)
     bitStyle = options.bitStyle ? 'most'
     switch bitStyle
       when 'most'
@@ -49,73 +110,130 @@ class StreamReaderNodeBuffer extends StreamReader
       position: 0
     @_states = []
 
-  slice: (start=0, end=undefined) ->
-    # TODO bitsInBB
-    # Create a clone.
-    r = new StreamReaderNodeBuffer()
-    r.littleEndian = @littleEndian
-    r._defaultBitReader = @_defaultBitReader
-    r._state = @_cloneState(@_state)
-    for state in @_states
-      r._states.push(@_cloneState(state))
+    # Alternatively, we could check if source is an instanceof
+    # stream.Readable.
+    if not @source
+      @_sourceIsStream = false
+    else if @source.seek
+      @_sourceIsStream = false
+      @seek = @_seekSource
+    else
+      @_sourceIsStream = true
+      @source.on 'end', =>
+        @_streamEnded = true
+        @_maybeEnd()
 
-    # Set the start position.
-    r.seek(start)
+  _maybeEnd: ->
+    if not @_state.availableBytes and not @_endEmitted
+      # null source never ends.
+      if @source and @_streamEnded or not @_sourceIsStream
+        # Reached the end, and no more available internally.
+        @_endEmitted = true
+        @emit('end')
 
-    if end != undefined
-      if end < start
-        end = start
-      # Figure out where to slice the end.
-      # First check current buffer.
-      cBufferAvail = r._state.currentBuffer.length - r._state.currentBufferPos
-      cBuffEnd = r._state.position + cBufferAvail
-      if end < cBuffEnd
-        # Slice inside current buffer.
-        dist = end - r._state.position
-        sliceEnd = r._state.currentBufferPos + dist
-        r._state.currentBuffer = r._state.currentBuffer[0...sliceEnd]
-        # Remove all subsequent buffers.
-        r._state.availableBytes = r._state.currentBuffer.length
-        r._state.buffers.length = 0
+  availableBytes: ->
+    return @_state.availableBytes
 
-      else if cBuffEnd == end
-        # Slice boundary is exactly end of current buffer.
-        # Remove all subsequent buffers.
-        r._state.availableBytes = r._state.currentBuffer.length
-        r._state.buffers.length = 0
+  getPosition: ->
+    return @_state.position
+
+  # Generally this is not very useful.
+  seek: (offset, origin = SEEK.BEGIN) ->
+    switch origin
+      when SEEK.BEGIN
+        newPos = offset
+
+      when SEEK.CURRENT
+        newPos = @_state.position + offset
+
+      when SEEK.END
+        throw new Error("This stream source does not support seeking from the end.")
 
       else
-        # Slice boundary is inside a following buffer.
-        # Start of the first buffer in buffers:
-        bufferStart = r._state.position + cBufferAvail
-        newBuffers = []
-        # Recompute availableBytes as we go along.
-        r._state.availableBytes = r._state.currentBuffer.length
-        for buffer in r._state.buffers
-          newBuffers.push(buffer)
-          bufferEnd = bufferStart + buffer.length
-          if end <= bufferEnd
-            # Ends in this buffer.
-            sliceEnd = buffer.length - (bufferEnd - end)
-            buffer = buffer[0...sliceEnd]
-            r._state.availableBytes += buffer.length
-            break
-          else
-            r._state.availableBytes += buffer.length
-          bufferStart += buffer.length
-        r._state.buffers = newBuffers
+        throw new Error("Invalid origin #{origin}")
+    if newPos < 0
+      throw new Error("Invalid offset #{offset}")
 
-    # To keep things clean, slice the current buffer for the start if necessary.
-    if r._state.currentBufferPos
-      r._state.currentBuffer = r._state.currentBuffer[r._state.currentBufferPos...]
-      r._state.availableBytes -= r._state.currentBufferPos
-      r._state.currentBufferPos = 0
+    if newPos < @_state.position
+      # Seeking backwards.
+      dist = @_state.position - newPos
+      if dist > @_state.currentBufferPos
+        throw new RangeError('Cannot seek backwards beyond current buffer.')
+      @_state.currentBufferPos -= dist
+      @_state.position -= dist
+      @_state.availableBytes += dist
+    else
+      # Seeking forwards.
+      dist = newPos - @_state.position
+      if not @ensureBytes(dist)
+        throw new RangeError('Cannot seek forwards beyond available bytes.')
+      @_advancePosition(dist)
+    return @_state.position
 
-    # Reset position.
-    r._state.position = 0
+  _seekSource: (offset, origin = SEEK.BEGIN) ->
+    # Check if this is a valid seek (not past end of file.)
+    switch origin
+      when SEEK.BEGIN
+        newPos = offset
 
-    return r
+      when SEEK.CURRENT
+        newPos = @_state.position + offset
 
+      when SEEK.END
+        newPos = @source.getSize() + offset
+
+      else
+        throw new Error("Invalid origin #{origin}")
+    if newPos >= @source.getSize()
+      throw new RangeError('Cannot seek forwards beyond available bytes.')
+    @source.seek(newPos)
+    @_state.position = newPos
+    @_state.availableBytes = 0
+    @_state.buffers = []
+    @_state.currentBuffer = null
+    @_state.currentBufferPos = 0
+    @clearBitBuffer()
+    return @_state.position
+
+  on: (ev, fn) ->
+    result = super(ev, fn)
+    # TODO:
+    # Node streams are odd.  They have inconsistent behavior on whether or
+    # not they emit a 'readable' event immediately on registration. Some
+    # observations:
+    # - For PassThrough, it will only fire if the registration happens at
+    #   least 1 tick *after* data was added to the stream.  File read
+    #   streams don't seem to have this problem.
+    # - Only the first registrant will get an immediate 'readable'.  All
+    #   others will not.
+    # Dunno if there's anything we can do about it.
+    if ev == 'readable' and not @_readableListening
+      @_readableListening = true
+      if @_sourceIsStream
+        # Relay the readable event.
+        @source.on('readable', => @emit('readable'))
+      else
+        # Source is always readable unless it is empty.
+        if @ensureBytes(1)
+          @emit('readable')
+    return result
+
+  # Ensures that at least the given number of bytes are available.
+  # numBytes is the minimum amount we desire.
+  # Returns true if at least numBytes are available.
+  ensureBytes: (numBytes) ->
+    while @_state.availableBytes < numBytes
+      if not @source
+        break
+      chunk = @source.read()
+      if chunk == null
+        @_maybeEnd()
+        break
+      @pushBuffer(chunk)
+    return @_state.availableBytes >= numBytes
+
+  # Only use this if you have a null source.
+  # Beware that 'readable' will never fire, nor will 'end'.
   pushBuffer: (buffer) ->
     addBuf = (state, buffer) ->
       if state.currentBuffer == null
@@ -127,14 +245,6 @@ class StreamReaderNodeBuffer extends StreamReader
       addBuf(state, buffer)
     addBuf(@_state, buffer)
     return
-
-# unreadBuffer: (buffer) ->
-#   if @_state.currentBuffer
-#     cBuf = @_state.currentBuffer[currentBufferPos...]
-#     @_state.buffers.unshift(cBuf)
-#   @_state.currentBuffer = buffer
-#   @_state.availableBytes += buffer.length
-#   return
 
   _cloneState: (state) ->
     clone = {}
@@ -189,37 +299,13 @@ class StreamReaderNodeBuffer extends StreamReader
         @_state.currentBufferPos = 0
     return
 
-  seek: (byteOffset) ->
-    if byteOffset < @_state.position
-      # Can only seek backwards in the current buffer.
-      dist = @_state.position - byteOffset
-      if dist > @_state.currentBufferPos
-        throw new RangeError('Cannot seek backwards beyond current buffer.')
-      @_state.currentBufferPos -= dist
-      @_state.position -= dist
-      @_state.availableBytes += dist
-    else
-      dist = byteOffset - @_state.position
-      if dist >= @_state.availableBytes
-        # TODO: This could, in theory, put all reads "on hold" (returning
-        # null) until enough bytes have been added via pushBuffer.  That
-        # may add some serious complexity.  It also wouldn't be able to
-        # detect seeking past the end of the stream.
-        throw new RangeError('Cannot seek forwards beyond available bytes.')
-      @_advancePosition(dist)
-    return
-
   skipBytes: (numBytes) ->
-    if @_state.availableBytes < numBytes
+    # This could be improved to immediately discard the buffers.
+    if not @ensureBytes(numBytes)
       throw new RangeError('Cannot skip past end of available bytes.')
     @_advancePosition(numBytes)
     return
 
-  tell: ->
-    return @_state.position
-
-  availableBytes: ->
-    return @_state.availableBytes
 
   ###########################################################################
   # Bit reading methods.
@@ -236,6 +322,12 @@ class StreamReaderNodeBuffer extends StreamReader
   availableBits: ->
     return @_state.availableBytes * 8 + @_state.bitsInBB
 
+  ensureBits: (numBits) ->
+    availableBits = @_state.availableBytes * 8 + @_state.bitsInBB
+    if availableBits < numBits
+      return @ensureBytes(Math.ceil((numBits - @_state.bitsInBB)/8))
+    return true
+
   currentBitAlignment: ->
     return @_state.bitsInBB
 
@@ -246,10 +338,10 @@ class StreamReaderNodeBuffer extends StreamReader
   # Reads from most significant bit towards least significant, one byte at a
   # time.
   readBitsMost: (numBits) ->
-    if @availableBits() < numBits
-      return null
     if numBits > 53
       throw new Error("Cannot read more than 53 bits (tried #{numBits}).")
+    if not @ensureBits(numBits)
+      return null
     # Is there enough data in the BB?
     needBits = numBits - @_state.bitsInBB
     if needBits > 0
@@ -306,10 +398,10 @@ class StreamReaderNodeBuffer extends StreamReader
     return result
 
   readBitsLeast: (numBits) ->
-    if @availableBits() < numBits
-      return null
     if numBits > 53
       throw new Error("Cannot read more than 53 bits (tried #{numBits}).")
+    if not @ensureBits(numBits)
+      return null
     # Is there enough data in the BB?
     needBits = numBits - @_state.bitsInBB
     if needBits > 0
@@ -374,10 +466,10 @@ class StreamReaderNodeBuffer extends StreamReader
   # Reads from most significant bit towards least significant, one 16-bit
   # little-endian integer at a time.
   readBitsMost16LE: (numBits) ->
-    if @availableBits() < numBits
-      return null
     if numBits > 32
       throw new Error("Cannot read more than 32 bits (tried #{numBits}).")
+    if not @ensureBits(numBits)
+      return null
     needBits = numBits - @_state.bitsInBB
     if needBits > 0
       needBytes = Math.ceil(needBits / 8)
@@ -405,10 +497,10 @@ class StreamReaderNodeBuffer extends StreamReader
       return result
 
   peekBitsMost16LE: (numBits) ->
-    if @availableBits() < numBits
-      return null
     if numBits > 32
       throw new Error("Cannot read more than 32 bits (tried #{numBits}).")
+    if not @ensureBits(numBits)
+      return null
     needBits = numBits - @_state.bitsInBB
     if needBits > 0
       needBytes = Math.ceil(needBits / 8)
@@ -432,13 +524,9 @@ class StreamReaderNodeBuffer extends StreamReader
   readString: (numBytes, options = {}, _peek=false) ->
     encoding = options.encoding ? 'utf8'
     trimNull = options.trimNull ? true
-    returnTruncated = options.returnTruncated ? false
 
-    if numBytes > @_state.availableBytes
-      if returnTruncated
-        numBytes = @_state.availableBytes
-      else
-        return null
+    if not @ensureBytes(numBytes)
+      return null
 
     if @_state.currentBuffer.length - @_state.currentBufferPos >= numBytes
       # Read entirely from current buffer.
@@ -466,7 +554,7 @@ class StreamReaderNodeBuffer extends StreamReader
   #   bytes are available.
   # @throw {RangeError} Would read past the end of the buffer.
   readBuffer: (numBytes, _peek=false) ->
-    if numBytes > @_state.availableBytes
+    if not @ensureBytes(numBytes)
       return null
 
     if @_state.currentBuffer.length - @_state.currentBufferPos >= numBytes
@@ -523,19 +611,20 @@ class StreamReaderNodeBuffer extends StreamReader
   peekBuffer: (numBytes) ->
     return @readBuffer(numBytes, true)
 
-  # Read bytes.
+  # Read an array of bytes.
   #
   # @param numBytes {Integer} The number of bytes to read.
   # @return {Array<Octets>} The data as an array of Numbers.
-  readBytes: (numBytes) ->
+  readArray: (numBytes) ->
     buffer = @readBuffer(numBytes)
     if buffer == null
       return null
     return Array::slice.call(buffer)
 
+  # Utility used for making the readXXX numeric functions.
   _makeBufferRead = (numBytes, bufferFunc, peek) ->
     return () ->
-      if numBytes > @_state.availableBytes
+      if not @ensureBytes(numBytes)
         return null
       if @_state.currentBuffer.length - @_state.currentBufferPos >= numBytes
         # Read directly from current buffer.
@@ -548,6 +637,8 @@ class StreamReaderNodeBuffer extends StreamReader
         result = bufferFunc.call(buffer, 0)
       return result
 
+  # Utility for making the readXXX numeric functions that do not specify an
+  # endianness.
   _makeBufferReadDefault = (littleEndianFunc, bigEndianFunc) ->
     return () ->
       if @littleEndian
@@ -669,12 +760,5 @@ class StreamReaderNodeBuffer extends StreamReader
   peekUInt64: _makeBufferReadDefault(@::peekUInt64LE, @::peekUInt64BE)
   peekInt64:  _makeBufferReadDefault(@::peekInt64LE, @::peekInt64BE)
 
-#############################################################################
 
-# class StreamReaderW3CFile extends StreamReader
-
-# #############################################################################
-
-# class StreamReaderW3CArrayBuffer extends StreamReader
-
-exports.StreamReaderNodeBuffer = StreamReaderNodeBuffer
+exports.StreamReader = StreamReader

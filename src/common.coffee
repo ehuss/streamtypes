@@ -1,0 +1,4 @@
+exports.SEEK = SEEK =
+  BEGIN: 'BEGIN'
+  CURRENT: 'CURRENT'
+  END: 'END'

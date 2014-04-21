@@ -3,7 +3,7 @@
 streamtypes = require('../src/index')
 
 exports.flushedExpectations = flushedExpectations = (options, actions, expectations) ->
-  stream = new streamtypes.StreamWriterNodeBuffer(options)
+  stream = new streamtypes.StreamWriter(null, options)
   results = []
   stream.on('data', (chunk) -> results.push(chunk))
   actions(stream)
@@ -41,7 +41,7 @@ exports.flushedTypeExpectation = (typeDecls, actions, expectation) ->
 # writer into 1 output buffer.  Use this if you don't care how the output is
 # chunked.
 exports.flushedTypeExpectation1 = (typeDecls, actions, expectation) ->
-  stream = new streamtypes.StreamWriterNodeBuffer()
+  stream = new streamtypes.StreamWriter()
   results = []
   stream.on('data', (chunk) -> results.push(chunk))
   w = new streamtypes.TypeWriter(stream, typeDecls)
@@ -65,7 +65,7 @@ exports.bufferCompare = (a, b) ->
     if a[i] != b[i]
       aa = Array::slice.call(a)
       ba = Array::slice.call(b)
-      throw new Error("Buffer a len:#{a.length} does not equal b len:#{b.length} - a=#{aa} b=#{bb}")
+      throw new Error("Buffer a len:#{a.length} does not equal b len:#{b.length} - a=#{aa} b=#{ba}")
 
 # Convert a string to an array of octets.
 exports.strBytesArray = (s) -> s.charCodeAt(i) for i in [0...s.length]
@@ -88,10 +88,11 @@ partition = (seq) ->
 exports.bufferPartition = bufferPartition = (bytes, f, options = {}) ->
   parts = partition(bytes)
   for part in parts
-    stream = new streamtypes.StreamReaderNodeBuffer(options)
+    source = new streamtypes.IOMemory()
+    stream = new streamtypes.StreamReader(source, options)
     for segment in part
-      b = new Buffer(segment)
-      stream.pushBuffer(b)
+      source.write(Buffer(segment))
+    source.seek(0)
     f(stream)
   return
 
@@ -103,10 +104,11 @@ exports.mostLeastPartition = (mostBytes, leastBytes, f) ->
 exports.bufferPartitionTypes = (typeDecls, bytes, f) ->
   parts = partition(bytes)
   for part in parts
-    stream = new streamtypes.StreamReaderNodeBuffer()
+    source = new streamtypes.IOMemory()
+    stream = new streamtypes.StreamReader(source)
     for segment in part
-      b = new Buffer(segment)
-      stream.pushBuffer(b)
+      source.write(Buffer(segment))
+    source.seek(0)
     r = new streamtypes.TypeReader(stream, typeDecls)
     f(r)
   return
@@ -114,20 +116,22 @@ exports.bufferPartitionTypes = (typeDecls, bytes, f) ->
 exports.bufferSplit = (bytes, f, options = {}) ->
   parts = [[bytes], (x for x in bytes)]
   for part in parts
-    stream = new streamtypes.StreamReaderNodeBuffer(options)
+    source = new stream.IOMemory()
+    stream = new streamtypes.StreamReader(source, options)
     for segment in part
-      b = new Buffer(segment)
-      stream.pushBuffer(b)
+      source.write(Buffer(segment))
+    source.seek(0)
     f(stream)
   return
 
 exports.bufferSplitTypes = (typeDecls, bytes, f) ->
   parts = [[bytes], (x for x in bytes)]
   for part in parts
-    stream = new streamtypes.StreamReaderNodeBuffer()
+    source = new streamtypes.IOMemory()
+    stream = new streamtypes.StreamReader(source)
     for segment in part
-      b = new Buffer(segment)
-      stream.pushBuffer(b)
+      source.write(Buffer(segment))
+    source.seek(0)
     r = new streamtypes.TypeReader(stream, typeDecls)
     f(r)
   return

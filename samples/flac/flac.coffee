@@ -85,6 +85,7 @@ class UnaryCodeType extends streamtypes.Type
         reader.stream.restoreState()
         return null
       if bit
+        reader.stream.discardState()
         return result
       else
         result += 1
@@ -256,10 +257,10 @@ types =
 
 class FLACReader extends events.EventEmitter
   constructor: (options={}) ->
-    super(options)
-    @_stream = new streamtypes.StreamReaderNodeBuffer()
+    super()
+    @_stream = new streamtypes.StreamReader()
     @_reader = new streamtypes.TypeReader(@_stream, types)
-    @_metaStream = new streamtypes.StreamReaderNodeBuffer()
+    @_metaStream = new streamtypes.StreamReader()
     @_metaReader = new streamtypes.TypeReader(@_metaStream, types)
     @_states = []
     @_currentState = @_sMagic
@@ -307,8 +308,8 @@ class FLACReader extends events.EventEmitter
     return @_sMetaData
 
   _sMetaData: ->
-    if @_stream.availableBytes() < @_metaHeader.length
-      return null
+    if not @_stream.ensureBytes(@_metaHeader.length)
+      return
     @_metaStream.clear()
     metaData = @_stream.readBuffer(@_metaHeader.length)
     @_metaStream.pushBuffer(metaData)
@@ -396,13 +397,13 @@ class FLACReader extends events.EventEmitter
 
   _sFrameHeader: ->
     debugger
-    start = @_stream.tell()
+    start = @_stream.getPosition()
     @_stream.saveState()
     @_frameHeader = @_reader.read('FrameHeader')
     if @_frameHeader == null
       @_stream.discardState()
       return null
-    end = @_stream.tell()
+    end = @_stream.getPosition()
     @_stream.restoreState()
     # Check CRC.  -1 for the CRC
     headerBuffer = @_stream.readBuffer(end-start-1)
@@ -453,6 +454,8 @@ class FLACReader extends events.EventEmitter
       when CHANNEL_ASSIGNMENT.MID_SIDE
         if @_currentChannel == 1
           @_bitsPerSample += 1
+    if @_subFrameHeader.wastedBits
+      @_bitsPerSample -= @_subFrameHeader.wastedBits
 
     if @_subFrameHeader.subFrameType == 0
       return @_sSubFrameConstant
@@ -464,13 +467,6 @@ class FLACReader extends events.EventEmitter
       return @_sSubFrameLPC
     else
       throw new Error("Unknown subframe type.")
-
-    # XXXXXXXXX wasted bits
-  # if(wasted_bits && do_full_decode) {
-  #   x = decoder->private_->frame.subframes[channel].wasted_bits;
-  #   for(i = 0; i < decoder->private_->frame.header.blocksize; i++)
-  #     decoder->private_->output[channel][i] <<= x;
-  # }
 
   _sFrameFooter: ->
     # Force alignment.
@@ -496,7 +492,7 @@ class FLACReader extends events.EventEmitter
       return @_sSubFrameHeader
 
   _sSubFrameConstant: ->
-    subFrameConstant = @_stream.readBits(@_bitsPerSample)
+    subFrameConstant = @_readBitsSigned(@_bitsPerSample)
     if subFrameConstant == null
       return null
     output = new Array(@_blockSize)
@@ -508,7 +504,7 @@ class FLACReader extends events.EventEmitter
 
   _sSubFrameVerbatim: ->
     totalBits = @_bitsPerSample * @_blockSize
-    if @_stream.availableBits() < totalBits
+    if not @_stream.ensureBits(totalBits)
       return null
     output = new Array(@_blockSize)
     for i in [0...@_blockSize]
@@ -521,7 +517,7 @@ class FLACReader extends events.EventEmitter
     # Read warm-up samples.
     @_order = @_predictorOrder = @_subFrameHeader.subFrameType & 0b111
     # +6 for the beginning of the residual.
-    if @_stream.availableBits() < (@_predictorOrder * @_bitsPerSample + 6)
+    if not @_stream.ensureBits(@_predictorOrder * @_bitsPerSample + 6)
       return null
     @_warmup = new Array(@_predictorOrder)
     for i in [0...@_predictorOrder]
@@ -604,7 +600,7 @@ class FLACReader extends events.EventEmitter
   _sResidualPartRice: ->
     loop
       # XXX FIXME
-      if @_stream.availableBits() < 9
+      if not @_stream.ensureBits(9)
         return null
       # Read the Rice parameter for this partition.
       riceParam = @_stream.readBits(@_riceParamLen)
@@ -613,7 +609,7 @@ class FLACReader extends events.EventEmitter
         # sample.
         bitsPerSample = @_stream.readBits(5)
         # XXX State
-        if @_order == 0 or @_currentRicePartition > 0
+        if @_partitionOrder == 0 or @_currentRicePartition > 0
           start = 0
         else
           # Already read the warm-up samples.
@@ -624,7 +620,7 @@ class FLACReader extends events.EventEmitter
           @_sampleIndex += 1
 
       else
-        if @_order == 0 or @_currentRicePartition > 0
+        if @_partitionOrder == 0 or @_currentRicePartition > 0
           numSamples = @_numPartitionSamples
         else
           # Already read the warm-up samples.

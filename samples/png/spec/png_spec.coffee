@@ -39,15 +39,15 @@ describe 'process file', ->
   filenames = fs.readdirSync('spec/PngSuite')
   for filename in filenames
     if filename[-4..] == '.png'
-      # if filename.indexOf('ctzn0g04.png') == -1
+      # if filename.indexOf('oi2n0g16.png') == -1
       #   continue
-      describe "file #{filename}", ->
+      describe filename, ->
         filename_ = filename
         it 'like libpng', ->
           # console.log(filename_)
           pngFile = fs.readFileSync('spec/PngSuite/' + filename_)
           dataFile = fs.readFileSync('spec/PngSuite/' + filename_+'.data')
-          reader = new streamtypes.StreamReaderNodeBuffer({littleEndian: true})
+          reader = new streamtypes.StreamReader(null, {littleEndian: true})
           dataReader = new streamtypes.TypeReader(reader, types)
           reader.pushBuffer(dataFile)
           expectedInfo = dataReader.read('Info')

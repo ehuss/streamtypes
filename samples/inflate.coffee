@@ -310,7 +310,7 @@ class Inflate extends EventEmitter
     return @_sDeflateBlockDynamicHuffmanCodeLenLen
 
   _sDeflateBlockDynamicHuffmanCodeLenLen: ->
-    if @_stream.availableBits() < @_dynamicHeader.numCodeLen * 3
+    if not @_stream.ensureBits(@_dynamicHeader.numCodeLen * 3)
       return
     lengths = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     for n in [0...@_dynamicHeader.numCodeLen]

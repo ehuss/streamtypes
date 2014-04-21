@@ -436,16 +436,18 @@ constructorTypes =
     write: (writer, value, context) ->
       return writer.stream.writeBuffer(value)
 
-  Bytes: class BytesType extends Type
+  # This is a special case of the Array type that reads UInt8 values into an
+  # array more efficiently.
+  ArrayBytes: class ArrayBytesType extends Type
     constructor: (@numBytes) ->
       if typeof numBytes == 'number'
         @sizeBits = numBytes*8
       return
     read: (reader, context) ->
       length = @getLength(reader, context, @numBytes)
-      return reader.stream.readBytes(length)
+      return reader.stream.readArray(length)
     write: (writer, value, context) ->
-      return writer.stream.writeBytes(value)
+      return writer.stream.writeArray(value)
 
   Const: class ConstType extends Type
     constructor: (@typeDecl, @expectedValue) ->
@@ -547,7 +549,6 @@ constructorTypes =
         writer.stream.writeBuffer(eBuf)
       return
 
-
   Array: class ArrayType extends Type
     constructor: (@length, @typeDecl) ->
       @read = @['_read_'+typeof length]
@@ -559,7 +560,7 @@ constructorTypes =
     _read_number: (reader, context) ->
       if @sizeBits
         # Minor optimization, probably not necessary.
-        if reader.stream.availableBits() >= @sizeBits
+        if reader.stream.ensureBits(@sizeBits)
           return (@type.read(reader, context) for n in [0...@length])
         else
           return null
@@ -729,7 +730,7 @@ constructorTypes =
     read: (reader, context) ->
       if @numBytes
         num = @getLength(reader, context, @numBytes)
-        if reader.stream.availableBytes() < num
+        if not reader.stream.ensureBytes(num)
           return null
         reader.stream.skipBytes(num)
         return undefined

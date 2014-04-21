@@ -101,7 +101,7 @@ types =
 # Sample tar file reader.
 #
 # This is an event emitter.  You start by passing a readable stream to the
-# {TarReader#processStream} method.  Register to receive the following events
+# {TarReader#read} method.  Register to receive the following events
 # with the `on` method:
 #
 # - 'newFile': Passed a header object describing the file.
@@ -111,28 +111,16 @@ types =
 # - 'error': Some error occurred.
 class TarReader extends EventEmitter
 
+  fileChunkSize: 16*1024
+
   constructor: ->
     @_currentState = @_sHeader
 
-  # Prime this reader to start processing a tar stream.
-  #
-  # @param readableStream {stream.Readable} The stream to read from.
-  processStream: (readableStream) ->
-    stream = new streamtypes.StreamReaderNodeBuffer()
+  read: (source) ->
+    stream = new streamtypes.StreamReader(source)
     @_reader = new streamtypes.TypeReader(stream, types)
-    onData = (chunk) => @_processChunk(chunk)
-    onEnd = => @_processEnd()
-    readableStream.on('data', onData)
-    readableStream.on('end', onEnd)
-    @on 'end', =>
-      readableStream.removeListener('data', onData)
-      readableStream.removeListener('end', onEnd)
-    return
-
-  # Processes a single chunk from the input stream.
-  _processChunk: (chunk) ->
-    @_reader.stream.pushBuffer(chunk)
-    @_runStates()
+    stream.on('readable', => @_runStates())
+    stream.on('end', => @_processEnd())
     return
 
   # Handles the event when the input stream indicates the end of the file has
@@ -141,7 +129,9 @@ class TarReader extends EventEmitter
     if @_currentState == null
       # end event already emitted.
       return
-    if @_reader.stream.availableBytes() or not @_currentState==@_sHeader
+    # It's OK if we ended while waiting for a header.  There should have been
+    # two null blocks, but we'll let that slide.
+    if not @_currentState == @_sHeader
       @emit('error', new Error('Truncated tar file.'))
     @emit('end')
     return
@@ -152,17 +142,12 @@ class TarReader extends EventEmitter
   # returning a falsy value.
   _runStates: ->
     while @_currentState
-      if not @_currentState()
+      nextState = @_currentState()
+      if nextState
+        @_currentState = nextState
+      else
         break
     return
-
-  # Switch to a new state.
-  #
-  # For convenience, states should return the return value of this to tell
-  # runStates that it should continue processing.
-  _gotoNextState: (state) ->
-    @_currentState = state
-    return true
 
   # Parse state Header.
   _sHeader: ->
@@ -171,7 +156,7 @@ class TarReader extends EventEmitter
     if raw == null
       return
     if @_isNullBlock(raw)
-      return @_gotoNextState(@_sLastBlock)
+      return @_sLastBlock
 
     header = @_reader.read('CommonHeader')
     @_verifyChecksum(header.checksum, raw)
@@ -191,7 +176,7 @@ class TarReader extends EventEmitter
     else
       header.pathname = header.name
     @emit('newFile', header)
-    return @_gotoNextState(@_sReadFile)
+    return @_sReadFile
 
   _determineTarType: ->
     magic = @_reader.stream.peekString(8, {encoding: 'utf8', trimNull: false})
@@ -234,28 +219,24 @@ class TarReader extends EventEmitter
 
   # Parse state reading the file data.
   _sReadFile: ->
-
     while @_fileBytesRemaining
-      numBytes = Math.min(@_fileBytesRemaining, @_reader.stream.availableBytes())
-      if not numBytes
+      numBytes = Math.min(@_fileBytesRemaining, @fileChunkSize)
+      if not @_reader.stream.ensureBytes(numBytes)
         return
       chunk = @_reader.stream.readBuffer(numBytes)
       if chunk == null
         throw new Error("Internal error, couldn't read #{numBytes} bytes.")
       @emit('data', chunk)
       @_fileBytesRemaining -= chunk.length
-    return @_gotoNextState(@_sReadFilePadding)
+    return @_sReadFilePadding
 
   # Parse state reading the padding at the end of a file.
   _sReadFilePadding: ->
-    while @_filePaddingRemaining
-      numBytes = Math.min(@_filePaddingRemaining, @_reader.stream.availableBytes())
-      if not numBytes
-        return
-      @_reader.stream.skipBytes(numBytes)
-      @_filePaddingRemaining -= numBytes
+    if not @_reader.stream.ensureBytes(@_filePaddingRemaining)
+      return
+    @_reader.stream.skipBytes(@_filePaddingRemaining)
     @emit('fileEnd')
-    return @_gotoNextState(@_sHeader)
+    return @_sHeader
 
 exports.types = types
 exports.TarReader = TarReader

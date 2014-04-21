@@ -19,30 +19,32 @@ class WaveReader extends events.EventEmitter
 
   outputFormat: null
 
-  constructor: (options={}) ->
-    super(options)
-    @_stream = new streamtypes.StreamReaderNodeBuffer({littleEndian: true})
-    @_chunkStream = new streamtypes.StreamReaderNodeBuffer({littleEndian: true})
-    @_reader = new streamtypes.TypeReader(@_stream, wave_types.types)
-    @_chunkReader = new streamtypes.TypeReader(@_chunkStream, wave_types.types)
+  constructor: () ->
+    super()
     @_currentState = @_sRiffHeader
     @_chunkMap =
       'fmt ': @_sChunkWaveFmt
       data:   @_sChunkWaveData
       fact:   @_sChunkFact
 
-  processBuffer: (chunk) ->
-    @_stream.pushBuffer(chunk)
-    @_runStates()
+  _initStream: (source) ->
+    @_stream = new streamtypes.StreamReader(source, {littleEndian: true})
+    @_chunkStream = new streamtypes.StreamReader(null, {littleEndian: true})
+    @_reader = new streamtypes.TypeReader(@_stream, wave_types.types)
+    @_chunkReader = new streamtypes.TypeReader(@_chunkStream, wave_types.types)
+
+  read: (readableStream) ->
+    @_initStream(readableStream)
+    @_stream.on 'readable', => @_runStates()
+    # TODO: Handle 'end'
     return
 
-  _runStates: ->
-    while @_currentState
-      nextState = @_currentState()
-      if nextState
-        @_currentState = nextState
-      else
-        break
+  processBuffer: (chunk) ->
+    if not @_stream
+      @_initStream(null)
+
+    @_stream.pushBuffer(chunk)
+    @_runStates()
     return
 
   ###########################################################################
@@ -210,7 +212,7 @@ class WaveReader extends events.EventEmitter
         throw new Error("Bit depth not yet supported.")
 
     switch @outputFormat.format
-      when FORMAT.LPCM
+      when wave_types.FORMAT.LPCM
         if @_waveFmt.audioFormat != wave_types.FORMAT_CODE.PCM
           throw new Error("Unsupported format code.")
         if @outputFormat.bitDepth and @outputFormat.bitDepth != @_waveFmt.bitsPerSample
@@ -240,7 +242,7 @@ class WaveReader extends events.EventEmitter
             throw new Error("Bit depth not yet supported.")
 
   _transformLPCM: (data) ->
-    result = @_newResult(@_transformSize(data))
+    result = new @_newResult(@_transformSize(data))
     dataIndex = 0
     resultIndex = 0
     while dataIndex < data.length
