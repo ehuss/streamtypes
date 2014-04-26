@@ -2,6 +2,7 @@ TODO
 ====
 use index.coffee to accumulate everything into a single namespace.
 
+http://www.w3.org/TR/streams-api/
 
 DEBUGGING
 =========

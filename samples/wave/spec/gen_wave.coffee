@@ -30,7 +30,6 @@ sampleRate = 8000
 filename = 'sineTest.wav'
 output = fs.createWriteStream(filename)
 writer = new wave.WaveWriter(output)
-debugger
 
 format =
   audioFormat: wave.FORMAT_CODE.PCM

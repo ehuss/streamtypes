@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>FLAC Demo</title>
+  <style>
+    #messages {
+      width: 90%;
+      height: 15em;
+      background-color: #eeeeee;
+      overflow: auto;
+    }
+  </style>
+</head>
+<body>
+  <h1>FLAC Demo</h1>
+
+  <audio id="audioPlayer" controls="controls">
+  </audio>
+
+  <div>
+    Select a FLAC file to load:
+    <input type="file" id="file" name="file">
+    <!--
+      Styling notes:
+      http://www.shauninman.com/archive/2007/09/10/styling_file_inputs_with_css_and_the_dom
+      https://github.com/javanto/jquery-fileinput
+    -->
+  </div>
+
+
+  <div id="messages"></div>
+
+</body>
+<script src="http://ajax.googleapis.com/ajax/libs/jquery/1.11.0/jquery.min.js"></script>
+<script src="flac_demo.js"></script>
+</html>

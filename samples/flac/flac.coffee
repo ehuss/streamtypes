@@ -5,6 +5,7 @@
 # - Fix state machine.
 # - Seeking.
 # - Performance.
+#   - Output data is stored in arrays.  Used typed arrays if available!
 # - MD5 checking.
 # - CRC16 checking.
 #
@@ -396,7 +397,6 @@ class FLACReader extends events.EventEmitter
   ###########################################################################
 
   _sFrameHeader: ->
-    debugger
     start = @_stream.getPosition()
     @_stream.saveState()
     @_frameHeader = @_reader.read('FrameHeader')

@@ -40,9 +40,15 @@ module.exports = (grunt) ->
         options:
           transform: ['coffeeify']
           extensions: ['.coffee']
-      png:
+      pngDemo:
         files:
           'samples/png/spec/pngview.js': ['samples/png/spec/pngview.coffee']
+        options:
+          transform: ['coffeeify']
+          extensions: ['.coffee']
+      flacDemo:
+        files:
+          'samples/flac/flac_demo.js': ['samples/flac/flac_demo.coffee']
         options:
           transform: ['coffeeify']
           extensions: ['.coffee']
@@ -59,8 +65,12 @@ module.exports = (grunt) ->
         ext: '.js'
 
     watch:
-      files: ['Gruntfile.coffee', 'src/**']
-      tasks: 'default'
+      core:
+        files: ['Gruntfile.coffee', 'src/**']
+        tasks: 'default'
+      flacDemo:
+        files: ['Gruntfile.coffee', 'src/**', 'samples/flac/**/*.+(coffee|html)']
+        tasks: 'browserify:flacDemo'
 
     coffeelint:
       files: ['src/**/*.coffee', 'spec/**/*.coffee']

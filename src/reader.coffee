@@ -246,15 +246,20 @@ class StreamReader extends events.EventEmitter
     addBuf(@_state, buffer)
     return
 
-  _cloneState: (state) ->
-    clone = {}
-    for key, value of state
-      clone[key] = value
-    clone.buffers = clone.buffers[0...]
-    return clone
-
   saveState: () ->
-    @_states.push(@_cloneState(@_state))
+    # This is slightly faster than doing:
+    #   for key, value of @_state
+    s = @_state
+    clone =
+      bitBuffer: s.bitBuffer
+      bitsInBB: s.bitsInBB
+      availableBytes: s.availableBytes
+      buffers: s.buffers[0...]
+      currentBuffer: s.currentBuffer
+      currentBufferPos: s.currentBufferPos
+      position: s.position
+
+    @_states.push(clone)
     return
 
   restoreState: () ->
