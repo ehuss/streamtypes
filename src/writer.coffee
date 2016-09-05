@@ -173,7 +173,7 @@ class StreamWriter extends events.EventEmitter
       if @_currentBuffer == null
         @_currentBuffer = new Buffer(@bufferSize)
         @_availableBytes = @bufferSize
-      bufferFunc.call(@_currentBuffer, value, @_currentBufferPos)
+      bufferFunc.call(@_currentBuffer, value, @_currentBufferPos, true)
       @_advancePosition(numBytes)
       return @_destOK
 

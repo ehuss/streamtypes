@@ -28,6 +28,8 @@ crc = require('../crc')
 # Types and functions for reading.
 #############################################################################
 
+# A pseudo-UTF-8 style encoding of a number, used for the `number` field in
+# the frame header.
 class UTF8CodeType extends streamtypes.Type
   read: (reader, context) ->
     reader.stream.saveState()
@@ -75,6 +77,7 @@ class UTF8CodeType extends streamtypes.Type
   write: (writer, value, context) ->
     throw new Error('Not implemented yet.')
 
+# Unary bit encoding, zeros followed by a single 1.
 class UnaryCodeType extends streamtypes.Type
   read: (reader, context) ->
     # Probably should be optimized.
@@ -213,22 +216,59 @@ types =
   FrameHeader: ['Record',
     'sync', ['Const', ['Bits', 14], 0x3ffe],
     'reserved', ['Const', ['Bits', 1], 0],
+    # 0 = fixed block size.  `number` == frame number
+    # 1 = variable block size.  `number` == sample number
     'blockingStrategy', ['Bits', 1],
+    # 0 = reserved
+    # 1 = 192
+    # 2-5 = 576*(2^(n-2))
+    #       576/1152/2304/4608
+    # 6 = (8 bits at end of header) - 1
+    # 7 = (16 bits at end of header) - 1
+    # 8-15 = 256 * (2^(n-8))
+    #        256/512/1024/2048/4096/8192/16384/32768
     'blockSizeType', ['Bits', 4],
+    # 0: get from STREAMINFO metadata block
+    # 1: 88.2kHz
+    # 2: 176.4kHz
+    # 3: 192kHz
+    # 4: 8kHz
+    # 5: 16kHz
+    # 6: 22.05kHz
+    # 7: 24kHz
+    # 8: 32kHz
+    # 9: 44.1kHz
+    # 10: 48kHz
+    # 11: 96kHz
+    # 12: get 8 bit sample rate (in kHz) from end of header
+    # 13: get 16 bit sample rate (in Hz) from end of header
+    # 14: get 16 bit sample rate (in tens of Hz) from end of header
+    # 15: invalid, to prevent sync-fooling string of 1s
     'sampleRateType', ['Bits', 4],
+    # 0-7: (number of channels)-1
+    # 8: left/side
+    # 9: right/side
+    # 10: mid/side
+    # 11-15: reserved
     'channelAssignment', ['Bits', 4],
     'bitsPerSample', ['Transform', ['Bits', 3],
                         ((value, context) -> bpsMap[value]),
                         ((value, context) -> bpsOutMap[value] ? 0)],
     'reserved2', ['Const', ['Bits', 1], 0],
+    # This is the frame "number", either the frame number or sample number
+    # based on blockingStrategy.
     'number', 'UTF8Code',
+    # Extended size of block when blockSizeType is insufficient.
     'blockSize', ['Switch', 'blockSizeType', {
       0b0110: 'UInt8'
       0b0111: 'UInt16'
       }, {ignoreMissing: true}
     ],
+    # Sample rate when sampleRateType is insufficient.
     'sampleRate', ['If', ((reader, context) -> context.sampleRateType & 0b1100),
                         ['CheckForInvalid', 'FrameSampleRate', 0b1111]],
+    # CRC of the header (starting with sync code, up to but not including this
+    # crc).
     'crc8', 'UInt8'
   ]
 
